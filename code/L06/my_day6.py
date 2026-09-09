@@ -23,3 +23,15 @@ for name, score in scores.items():
 #张三 90
 #李四 88
 #王五 95    
+
+book = {}
+for _ in range(3):
+    name,phone = input("姓名，电话：").split()
+    book[name] = phone 
+name = input("查谁？")
+print(book.get(name,"查无此人"))
+#姓名，电话：张三 1380
+#姓名，电话：李四 139
+#姓名，电话：王五 137
+#查谁？王五
+#137
