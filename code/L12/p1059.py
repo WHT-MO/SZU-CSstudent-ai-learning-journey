@@ -1,0 +1,6 @@
+n = int(input())
+N = set(map(int,input().split()))
+N = sorted(N)
+print(len(N))
+y = " ".join(map(str,N))
+print(y)
