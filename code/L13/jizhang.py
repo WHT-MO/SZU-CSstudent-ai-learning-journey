@@ -4,47 +4,81 @@ import os
 
 class Jizhang:
     def __init__(self):
-        self.today = str(date.today())
-        self.name = 0
-        self.comein = 0
-        self.comeback = 0
-        self.path = os.path.join(os.path.dirname(__file__),"记账日志.txt")
-        self.back = []
+        self.path = os.path.join(os.path.dirname(__file__),"记账日志.json")
+        self.records = []
+        self.load()
 
-    def write(self):#存档
-        self.name = input("你用的模型是：")
-        self.comein = int(input("输入Tokens：")) + self.comein
-        self.comeback = int(input("输出Tokens：")) + self.comeback
-        self.back = [self.name,self.today,self.comein,self.comeback]
-        with open(self.path,"w",encoding="utf-8") as f:
-            json.dump(self.back,f,ensure_ascii=False)
-
-    def read(self):#读档
+    def load(self):
         try:
             with open(self.path,"r",encoding="utf-8") as f:
-                self.back = json.load(f)
-                self.comein = self.back[2]
-                self.comeback = self.back[3]
+                self.records = json.load(f)
         except FileNotFoundError:
+            self.records = []
             print("还没有存档，这是第一次运行")
 
-    def check(self):#看全部
-        print(f"模型：{self.back[0]} 日期：{self.back[1]}\n输入：{self.back[2]} 输出：{self.back[3]}")
+    def save(self):
+        with open(self.path,"w",encoding="utf-8") as f:
+            json.dump(self.records,f,ensure_ascii=False,indent=2)
 
-    def exit(self):#退出菜单
-        print("感谢使用。")
+    def ask_int(self,tip):
+        while True:
+            try:
+                return int(input(tip))
+            except ValueError:
+                print("这里要填数字，再试一次")
 
-data = Jizhang()
-t = 0
-while t == 0:
-    data.read()
+    def add(self):
+        name = input("你用的模型是：")
+        comein = self.ask_int("输入 Tokens：")
+        comeback = self.ask_int("输出 Tokens：")
+        self.records.append({
+            "日期":str(date.today()),
+            "模型":name,
+            "输入":comein,
+            "输出":comeback,
+        })
+        self.save()
+        print(f"已记一笔，当前共{len(self.records)}笔")
+
+    def show_all(self):
+        if not self.records:
+            print("还没有记录")
+            return
+        for i,r in enumerate(self.records,1):
+            print(f"{i}. {r["日期"]}  {r["模型"]}  输入{r["输入"]}  输出{r["输出"]}")
+
+    def summary(self):
+        if not self.records:
+            print("还没有记录")
+            return
+        total = {}
+        for r in self.records:
+            d = r["日期"]
+            if d not in total:
+                total[d] = {"输入": 0,"输出": 0}
+            total[d]["输入"] += r["输入"]
+            total[d]["输出"] += r["输出"]
+
+        print("按日期汇总：")
+        for d,s in total.items():
+            print(f"{d}  输入{s["输入"]}  输出{s["输出"]}  合计{s["输入"] + s["输出"]}")
+
+def main():
+    zhang = Jizhang()
     while True:
-        x = int(input("1 = 录入，2 = 查阅，0 = 退出"))
-        if x == 1:
-            data.write()
-        elif x == 2:
-            data.check()
-        elif x == 0:
-            data.exit()
+        print("\n1 = 记一笔 2 = 看全部 3 = 按日期汇总 0 = 退出")
+        x = input("请选择：").strip()
+        if x == "1":
+            zhang.add()
+        elif x == "2":
+            zhang.show_all()
+        elif x == "3":
+            zhang.summary()
+        elif x == "0":
+            print("已存档，再见。")
             break
-    t = int(input("继续请按0："))
+        else:
+            print("没有这个选项")
+
+if __name__ == "__main__":
+    main()
