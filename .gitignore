@@ -19,3 +19,7 @@ tmp/
 记账日志.json
 打卡状态.txt
 code/测试/
+# 本地记忆（不进仓库，只留本机）
+memory/03_会话纪要/
+memory/01_学员档案.md
+memory/05_历史明细.md
