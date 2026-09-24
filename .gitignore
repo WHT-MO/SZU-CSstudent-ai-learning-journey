@@ -5,6 +5,11 @@ __pycache__/
 venv/
 *.egg-info/
 
+# 本机 API 密钥：保留无密钥模板 .env.example
+.env
+.env.*
+!.env.example
+
 # 编辑器/系统
 .vscode/
 .idea/
