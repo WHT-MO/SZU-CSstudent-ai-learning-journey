@@ -10,6 +10,13 @@ venv/
 .env.*
 !.env.example
 
+# Agent 本地会话和工作区中的个人文件
+code/agent_v1/session.json
+code/agent_v1/workspace/*
+!code/agent_v1/workspace/ideas/
+!code/agent_v1/workspace/ideas/todo.txt
+!code/agent_v1/workspace/study.txt
+
 # 编辑器/系统
 .vscode/
 .idea/

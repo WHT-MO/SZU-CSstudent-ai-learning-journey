@@ -8,9 +8,9 @@ from tool_schemas import (
 )
 
 
-workspace_root = Path(__file__).resolve().parent / "workspace"
+workspace_root = Path(__file__).resolve().parent / "workspace" #设置工作区
 
-
+#路径安全检查
 def resolve_workspace_path(relative_path: str) -> Path:
     """把 workspace 相对路径转换成安全的绝对路径。"""
     workspace_path = workspace_root.resolve()
@@ -23,18 +23,18 @@ def resolve_workspace_path(relative_path: str) -> Path:
 
     return candidate_path
 
-
+#read工具
 def read_file(file_args: ReadFileArgs) -> str:
     file_path = resolve_workspace_path(file_args.path)
     return file_path.read_text(encoding="utf-8")
 
-
+#write工具
 def write_file(file_args: WriteFileArgs) -> str:
     file_path = resolve_workspace_path(file_args.path)
     file_path.write_text(file_args.content, encoding="utf-8")
     return f"文件已写入：{file_args.path}"
 
-
+#list工具
 def list_files(file_args: ListFilesArgs) -> str:
     directory_path = resolve_workspace_path(file_args.path)
 
@@ -48,7 +48,7 @@ def list_files(file_args: ListFilesArgs) -> str:
 
     return "\n".join(file_names)
 
-
+#edit工具
 def edit_file(file_args: EditFileArgs) -> str:
     if not file_args.old_text:
         raise ValueError("old_text 不能为空")
@@ -67,7 +67,7 @@ def edit_file(file_args: EditFileArgs) -> str:
     file_path.write_text(updated_content, encoding="utf-8")
     return f"文件已修改：{file_args.path}"
 
-
+#工具函数表
 tool_functions = {
     "read_file": read_file,
     "write_file": write_file,
