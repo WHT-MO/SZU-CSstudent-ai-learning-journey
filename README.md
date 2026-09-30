@@ -50,6 +50,8 @@ cd D:\code\dsh\python-course
 | P1097《统计数字》 | `code/洛谷/P1097.py` | AC 100 分 |
 | P1149《火柴棒等式》 | `code/洛谷/P1149.py` | AC 100 分 |
 | P1614《爱与愁的心痛》 | `code/洛谷/p1614.py` | AC 100 分 |
+| P1601《A+B Problem（高精）》 | `code/洛谷/P1601.py` | AC 100 分 |
+| P1601《A+B Problem（高精）》 | `code/洛谷/P1601.py` | AC 100 分 |
 
 ## 仓库结构
 
