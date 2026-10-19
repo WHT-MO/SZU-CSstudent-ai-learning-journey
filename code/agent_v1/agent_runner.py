@@ -155,9 +155,16 @@ async def summarize_messages(client, messages):
             await asyncio.sleep(2 ** attempt)
 
         except httpx.HTTPStatusError as error:
-            print(f"API 请求失败：{error.response.status_code}")
-            print(error.response.text)
-            return None
+            if error.response.status_code != 429:
+                print(f"API 请求失败：{error.response.status_code}")
+                print(error.response.text)
+                return None
+
+            if error.response.status_code == 429 and attempt == 2:
+                print(f"请求最终失败：{error}")
+                return None
+
+            await asyncio.sleep(2 ** attempt)
 
         except ValueError as error:
             print(f"响应解析失败：{error}")
@@ -333,7 +340,7 @@ async def stream_message(client: httpx.AsyncClient, messages: list[dict], tools:
 
             if not stream_completed:
                 if tool_calls:
-                    print("流式响应未完整结束，不保存不完整工具调用")
+                    print("\n流式响应未完整结束，不保存不完整工具调用")
                     return None, False
 
                 if not content_parts and not reasoning_parts:
@@ -350,7 +357,7 @@ async def stream_message(client: httpx.AsyncClient, messages: list[dict], tools:
                 if reasoning_parts:
                     partial_message["reasoning_content"] = "".join(reasoning_parts)
 
-                print("流式响应未完整结束，保存已收到内容")
+                print("\n流式响应未完整结束，保存已收到内容")
                 return partial_message, False
 
             print()
