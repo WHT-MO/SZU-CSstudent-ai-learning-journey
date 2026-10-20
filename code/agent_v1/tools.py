@@ -5,6 +5,7 @@ from tool_schemas import (
     ListFilesArgs,
     ReadFileArgs,
     WriteFileArgs,
+    SearchFileArgs
 )
 
 
@@ -25,8 +26,23 @@ def resolve_workspace_path(relative_path: str) -> Path:
 
 #read工具
 def read_file(file_args: ReadFileArgs) -> str:
+    if file_args.end_line and file_args.end_line < file_args.start_line:
+        raise ValueError("结束行不能小于起始行")
+    
     file_path = resolve_workspace_path(file_args.path)
-    return file_path.read_text(encoding="utf-8")
+    lines = file_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    total_lines = len(lines)
+    selected = lines[file_args.start_line - 1:file_args.end_line]
+
+    if not lines:
+        return "文件为空"
+
+    if total_lines < file_args.start_line:
+        raise ValueError(f"文件共{total_lines}行")
+
+    actual_end = file_args.start_line + len(selected) - 1
+
+    return f"【{file_args.path}: 第{file_args.start_line}-{actual_end}行，共{total_lines}行】\n" + "".join(selected)
 
 #write工具
 def write_file(file_args: WriteFileArgs) -> str:
@@ -67,10 +83,29 @@ def edit_file(file_args: EditFileArgs) -> str:
     file_path.write_text(updated_content, encoding="utf-8")
     return f"文件已修改：{file_args.path}"
 
+#search工具
+def search_file(file_args: SearchFileArgs) -> str:
+    file_path = resolve_workspace_path(file_args.path)
+    lines = file_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    selected = []
+
+    for line_number, line in enumerate(lines, start=1):        
+        if file_args.query in line:
+            if len(selected) >= file_args.max_matches:
+                selected.append("仍有匹配未展示")
+                break
+            else:
+                selected.append(f"{file_args.path}:{line_number}:{line}")
+
+    if not selected:
+        return "没有匹配结果"
+    return "".join(selected)
+
 #工具函数表
 tool_functions = {
     "read_file": read_file,
     "write_file": write_file,
     "list_files": list_files,
     "edit_file": edit_file,
+    "search_file": search_file,
 }

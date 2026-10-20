@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 from tool_schemas import tool_arg_models, tool_specs
 from tools import tool_functions
+from tool_events import emit
 
 
 URL = "https://api.deepseek.com/chat/completions"
@@ -59,16 +60,20 @@ def clear_session():
     print("会话历史已清除")
 
 #计算tokens估计值
-def estimate_messages_tokens(messages):
+def estimate_request_tokens(messages, tools):
+    request_data = {
+        "messages": messages,
+        "tools": tools,
+    }
     text = json.dumps(
-        messages,
+        request_data,
         ensure_ascii=False,
     )
     return len(text) // 4
 
 #会话长度边界检查
-def trim_messages(messages, max_tokens):
-    tokens = estimate_messages_tokens(messages)
+def trim_messages(messages, tools, max_tokens):
+    tokens = estimate_request_tokens(messages, tools)
     if tokens <= max_tokens:
         return messages
 
@@ -82,7 +87,7 @@ def trim_messages(messages, max_tokens):
             start += 1
             continue
 
-        tokens = estimate_messages_tokens([system_message, *history[start:]])
+        tokens = estimate_request_tokens([system_message, *history[start:]], tools)
         if tokens <= max_tokens // 4:
             break
 
@@ -171,15 +176,16 @@ async def summarize_messages(client, messages):
             return None
 
     return None
+
 #会话压缩协程
-async def prepare_request_messages(client, messages, max_tokens):
-    if estimate_messages_tokens(messages) <= max_tokens:
+async def prepare_request_messages(client, messages, tools, max_tokens):
+    if estimate_request_tokens(messages, tools) <= max_tokens:
         return messages
 
     summary = await summarize_messages(client, messages)
 
     if summary is None:
-        return trim_messages(messages, max_tokens=max_tokens)
+        return trim_messages(messages, tools, max_tokens=max_tokens)
 
     return [
         messages[0],
@@ -293,6 +299,8 @@ async def stream_message(client: httpx.AsyncClient, messages: list[dict], tools:
         ) as response:
             response.raise_for_status()
 
+            usage = None #deepseek默认在最后一个JSON块返回tokens统计
+
             async for line in response.aiter_lines(): #流式输出
                 if not line or not line.startswith("data:"):
                     continue
@@ -304,8 +312,11 @@ async def stream_message(client: httpx.AsyncClient, messages: list[dict], tools:
                     break
 
                 chunk = json.loads(data)
-                delta = chunk["choices"][0].get("delta", {})
+                chunk_usage = chunk.get("usage")
+                if chunk_usage:
+                    usage = chunk_usage
 
+                delta = chunk["choices"][0].get("delta", {})
                 content = delta.get("content")
                 if content:
                     print(content, end="", flush=True)
@@ -360,7 +371,12 @@ async def stream_message(client: httpx.AsyncClient, messages: list[dict], tools:
                 print("\n流式响应未完整结束，保存已收到内容")
                 return partial_message, False
 
-            print()
+            print()   
+            if usage:
+                print("输入：",usage["prompt_tokens"])
+                print("输出：",usage["completion_tokens"])
+                print("合计：",usage["total_tokens"])
+
             message = {
                 "role": "assistant",
                 "content": "".join(content_parts),
@@ -456,6 +472,11 @@ async def execute_validated_tool(
         tool_function,
         validated_args,
 ):
+    await emit({ #工具开始通知
+        "type": "tool_start",
+        "tool_call_id": tool_call_id,
+    })
+    
     try: #文件校验
         tool_content = await asyncio.wait_for(
             asyncio.to_thread(
@@ -464,11 +485,21 @@ async def execute_validated_tool(
             ),
         timeout=10,
         )
+        status = "success"
+
     except asyncio.CancelledError:
-        print("工具任务被取消")
+        status = "cancelled"
+        await emit({
+            "type": "tool_end",
+            "tool_call_id": tool_call_id,
+            "status": status,
+        })
         raise #传递取消信号
+
     except asyncio.TimeoutError: #工具独立超时(不能强制杀掉线程)
         tool_content = "工具执行超时"
+        status = "timeout"
+
     except (
         FileNotFoundError, #文件不存在
         ValueError, #路径超出 workspace
@@ -478,22 +509,71 @@ async def execute_validated_tool(
         UnicodeDecodeError, #文件不是 UTF-8 编码
     ) as error:
         tool_content = f"文件操作失败：{error}"
+        status = "error"
+
     except Exception as error:
         tool_content = (
             f"工具执行出现未预期错误：{type(error).__name__}: {error}"
         )
+        status = "error"
+
+    await emit({ #工具结束通知
+        "type": "tool_end",
+        "tool_call_id": tool_call_id,
+        "status": status,
+    })
 
     return make_tool_result(
         tool_call_id,
         tool_content,
     )
 
+#批次执行工具
+async def execute_tool_batch(valid_tools):
+    has_write = False #判断是否有文件修改
+    for item in valid_tools:
+        if item[2] == tool_functions["write_file"] or item[2] == tool_functions["edit_file"]:
+            has_write = True
+
+    if has_write == True: #处理工具调度
+        executed_results = [ #执行工具
+            await execute_validated_tool(
+                tool_call_id,
+                tool_function,
+                validated_args,
+            )
+            for index, tool_call_id, tool_function, validated_args in valid_tools
+        ]
+    else:
+        parallel_tasks = [ #收集执行工具
+            execute_validated_tool(
+                tool_call_id,
+                tool_function,
+                validated_args,
+            )
+            for index, tool_call_id, tool_function, validated_args in valid_tools
+        ]                
+        executed_results = await asyncio.gather(*parallel_tasks) #并发执行，按输入顺序返回结果
+
+    return executed_results    
+
+#限制工具单次输出长度
+def limit_tool_output(content: str, max_bytes: int = 50 * 1024) -> str:
+    encoded = content.encode("utf-8")
+    if len(encoded) > max_bytes:
+        notice = "\n【结果不完整、只展示开头，可缩小读取范围或搜索条件后重取】"
+        body_limit = max_bytes - len(notice.encode("utf-8"))
+        limit_content = encoded[:body_limit].decode("utf-8", errors="ignore")
+        return notice + limit_content
+        
+    return content
+
 #生成工具执行结果
 def make_tool_result(tool_call_id: str, content: str) -> dict:
     return {
         "role": "tool",
         "tool_call_id": tool_call_id,
-        "content": content,
+        "content": limit_tool_output(content),
     }
 
 #Agent Loop结构
@@ -518,6 +598,7 @@ async def run_agent(user_prompt: str, max_turns: int = 10) -> None:
         request_messages = await prepare_request_messages( #压缩历史对话
             client,
             messages,
+            tools,
             max_tokens=200000
         )
         message, completed = await stream_message(client, request_messages, tools)
@@ -552,6 +633,7 @@ async def run_agent(user_prompt: str, max_turns: int = 10) -> None:
                 messages.extend(tool_results)
                 save_messages(messages)
                 return
+            
             turn_count += 1
 
             for index, tool_call in enumerate(message["tool_calls"]): #工具调用收集循环
@@ -576,16 +658,7 @@ async def run_agent(user_prompt: str, max_turns: int = 10) -> None:
                     valid_tools,
                 )
 
-            parallel_tasks = [ #执行工具
-                execute_validated_tool(
-                    tool_call_id,
-                    tool_function,
-                    validated_args,
-                )
-                for index, tool_call_id, tool_function, validated_args in valid_tools
-            ]
-
-            executed_results = await asyncio.gather(*parallel_tasks) #按索引返回
+            executed_results = await execute_tool_batch(valid_tools) #执行工具
 
             for item, result in zip(valid_tools, executed_results):
                 index = item[0]
@@ -598,6 +671,7 @@ async def run_agent(user_prompt: str, max_turns: int = 10) -> None:
             request_messages = await prepare_request_messages(
                 client,
                 messages,
+                tools,
                 max_tokens=200000
             )
             message, completed = await stream_message(client, request_messages, tools) #再次请求
