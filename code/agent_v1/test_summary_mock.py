@@ -25,7 +25,8 @@ async def fake_response_then_success(request):
         {
             "choices": 
             [
-                {
+                {   
+                    "finish_reason": "stop",
                     "message":
                     {
                         "role": "assistant",

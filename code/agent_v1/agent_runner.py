@@ -18,6 +18,13 @@ HISTORY_PATH = Path(__file__).resolve().parent / "session.json"
 
 load_dotenv() #读取API_key
 
+#预算分配和输出限制
+CONTEXT_BUDGET = 200000
+MAX_OUTPUT_TOKENS = 8000
+TOKEN_MARGIN = 2000
+
+INPUT_TOKEN_BUDGET = CONTEXT_BUDGET - MAX_OUTPUT_TOKENS - TOKEN_MARGIN
+
 #保存会话历史
 def save_messages(messages):
     text = json.dumps(
@@ -105,6 +112,7 @@ async def summarize_messages(client, messages):
 4.错误原因
 5.未完成任务和下一步
 
+若输入已有历史摘要，请在其基础上合并后续记录，保留仍有效的目标、约束与决策。
 只返回摘要正文，不要调用工具。
 """
 
@@ -126,6 +134,7 @@ async def summarize_messages(client, messages):
         "model": "deepseek-flash",
         "messages": summary_messages,
         "stream": False,
+        "max_tokens": MAX_OUTPUT_TOKENS,
     }
 
     headers = {
@@ -141,7 +150,10 @@ async def summarize_messages(client, messages):
             )
             response.raise_for_status()
 
-            message = extract_message(response)
+            message = extract_message(
+                response,
+                allowed_finish_reasons=("stop",),
+                )
             summary = message.get("content")
 
             if not isinstance(summary, str) or not summary.strip():
@@ -177,23 +189,65 @@ async def summarize_messages(client, messages):
 
     return None
 
-#会话压缩协程
-async def prepare_request_messages(client, messages, tools, max_tokens):
-    if estimate_request_tokens(messages, tools) <= max_tokens:
+#拆分会话
+def split_messages_for_summary(messages):
+    for index in range(len(messages) -1 ,0, -1):
+        if messages[index]["role"] == "user" :
+            current_start = index
+            break
+
+    system_message = messages[0]
+    old_messages = messages[1:current_start]
+    current_turn = messages[current_start:]
+    
+    return system_message, old_messages, current_turn
+
+#构造聊天请求信息
+def build_request_messages(messages, summary_cache):
+    if summary_cache["summary"] is None:
         return messages
 
-    summary = await summarize_messages(client, messages)
-
-    if summary is None:
-        return trim_messages(messages, tools, max_tokens=max_tokens)
-
-    return [
+    request_messages = [
         messages[0],
         {
             "role": "system",
-            "content": f"历史摘要：\n{summary}",
+            "content": f"历史摘要：\n{summary_cache["summary"]}",
         },
+        *messages[summary_cache["next_message_index"]:]
     ]
+
+    return request_messages
+
+#会话压缩协程
+async def prepare_request_messages(client, messages, tools, summary_cache, max_tokens):
+    request_messages = build_request_messages(messages, summary_cache)
+    if estimate_request_tokens(request_messages, tools) <= max_tokens:
+        return request_messages
+
+    system_message, old_messages, current_turn = split_messages_for_summary(request_messages)
+    current_start = len(messages) - len(current_turn)
+
+    kept_messages = [system_message, *current_turn]
+    if estimate_request_tokens(kept_messages, tools) > max_tokens:
+        print("系统提示、当前轮和工具定义合计超过输入预算，本次停止请求")
+        return None
+
+    if summary_cache["summary"] is None or current_start > summary_cache["next_message_index"]:
+        new_summary = await summarize_messages(client, old_messages)
+        if not new_summary:
+            print("摘要失败，返回当前轮")
+            return kept_messages
+
+        summary_cache["summary"] = new_summary
+        summary_cache["next_message_index"] = current_start
+
+    request_messages = build_request_messages(messages, summary_cache)
+
+    if estimate_request_tokens(request_messages, tools) > max_tokens:
+        print("摘要超过输入预算，返回当前轮")
+        return kept_messages
+
+    return request_messages
 
 #模型读取工具
 def build_tools_payload() -> list[dict]:
@@ -209,8 +263,11 @@ def build_tools_payload() -> list[dict]:
         for tool in tool_specs
     ]
 
-#响应结构边界检查
-def extract_message(response: httpx.Response) -> dict:
+#非流式响应结构边界检查
+def extract_message(
+        response: httpx.Response,
+        allowed_finish_reasons=("stop", "tool_calls"),
+        ) -> dict:
     try:
         result = response.json()
     except json.JSONDecodeError as error:
@@ -226,9 +283,13 @@ def extract_message(response: httpx.Response) -> dict:
     if not isinstance(message, dict):
         raise ValueError("API 响应缺少有效的 message")
 
+    finish_reason = choices[0].get("finish_reason")
+    if finish_reason not in allowed_finish_reasons:
+        raise ValueError(f"本轮响应异常结束：{finish_reason}")
+
     return message
 
-#非流式请求与边界检查(流式请求出错时切换)
+#非流式请求与边界检查(仅做参考)
 async def non_stream_message(client: httpx.AsyncClient, messages: list[dict], tools: list[dict]) -> dict | None:
     api_key = os.getenv("DEEPSEEK_API_KEY")
     if not api_key:
@@ -240,6 +301,7 @@ async def non_stream_message(client: httpx.AsyncClient, messages: list[dict], to
         "tools": tools,
         "messages": messages,
         "stream": False,
+        "max_tokens": MAX_OUTPUT_TOKENS,
     }
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -278,6 +340,7 @@ async def stream_message(client: httpx.AsyncClient, messages: list[dict], tools:
         "tools": tools,
         "messages": messages,
         "stream": True,
+        "max_tokens": MAX_OUTPUT_TOKENS,
     }
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -288,7 +351,7 @@ async def stream_message(client: httpx.AsyncClient, messages: list[dict], tools:
     tool_calls = {} #工具调用
     reasoning_parts = [] #思考过程
 
-    stream_completed = False #会话完整性检查
+    stream_completed = False #流结束检查
 
     try:
         async with client.stream(
@@ -300,6 +363,7 @@ async def stream_message(client: httpx.AsyncClient, messages: list[dict], tools:
             response.raise_for_status()
 
             usage = None #deepseek默认在最后一个JSON块返回tokens统计
+            finish_reason = None #区分流完整结束和异常结束
 
             async for line in response.aiter_lines(): #流式输出
                 if not line or not line.startswith("data:"):
@@ -315,6 +379,8 @@ async def stream_message(client: httpx.AsyncClient, messages: list[dict], tools:
                 chunk_usage = chunk.get("usage")
                 if chunk_usage:
                     usage = chunk_usage
+
+                finish_reason = chunk["choices"][0].get("finish_reason")
 
                 delta = chunk["choices"][0].get("delta", {})
                 content = delta.get("content")
@@ -349,7 +415,13 @@ async def stream_message(client: httpx.AsyncClient, messages: list[dict], tools:
                 if reasoning:
                     reasoning_parts.append(reasoning)
 
-            if not stream_completed:
+            print()   
+            if usage:
+                print("输入：",usage["prompt_tokens"])
+                print("输出：",usage["completion_tokens"])
+                print("合计：",usage["total_tokens"])
+
+            if not stream_completed or finish_reason not in ("stop", "tool_calls"):
                 if tool_calls:
                     print("\n流式响应未完整结束，不保存不完整工具调用")
                     return None, False
@@ -361,21 +433,15 @@ async def stream_message(client: httpx.AsyncClient, messages: list[dict], tools:
                     "role": "assistant",
                     "content": (
                         "".join(content_parts)
-                        + "\n[这条回答因流式连接中断，内容不完整]"
+                        + "\n[本轮响应未完整结束，内容不完整]"
                     ),
                 }
 
                 if reasoning_parts:
                     partial_message["reasoning_content"] = "".join(reasoning_parts)
 
-                print("\n流式响应未完整结束，保存已收到内容")
+                print(f"\n本轮响应未完整结束，保存已收到内容，异常结束原因：{finish_reason}")
                 return partial_message, False
-
-            print()   
-            if usage:
-                print("输入：",usage["prompt_tokens"])
-                print("输出：",usage["completion_tokens"])
-                print("合计：",usage["total_tokens"])
 
             message = {
                 "role": "assistant",
@@ -591,6 +657,10 @@ async def run_agent(user_prompt: str, max_turns: int = 10) -> None:
     })
     save_messages(messages)
 
+    summary_cache = { #摘要缓存
+        "summary": None,
+        "next_message_index": 1,
+        }
     tools = build_tools_payload()
     turn_count = 0
 
@@ -599,8 +669,12 @@ async def run_agent(user_prompt: str, max_turns: int = 10) -> None:
             client,
             messages,
             tools,
-            max_tokens=200000
+            summary_cache=summary_cache,
+            max_tokens=INPUT_TOKEN_BUDGET
         )
+        if not request_messages:
+            return
+        
         message, completed = await stream_message(client, request_messages, tools)
 
         while message is not None:
@@ -672,8 +746,12 @@ async def run_agent(user_prompt: str, max_turns: int = 10) -> None:
                 client,
                 messages,
                 tools,
-                max_tokens=200000
+                summary_cache=summary_cache,
+                max_tokens=INPUT_TOKEN_BUDGET
             )
+            if not request_messages:
+                return
+            
             message, completed = await stream_message(client, request_messages, tools) #再次请求
 
 

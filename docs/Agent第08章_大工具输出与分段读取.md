@@ -239,3 +239,52 @@ usage中prompt_tokens表示本次输入、completion_tokens表示本次输出、
 3. run_agent中两次调用prepare_request_messages都传入已有build_tools_payload生成的tools；它已经在这两处可用，不重复构建。同步所有旧估算函数名的调用。
 
 当前输入阈值200000与裁剪策略保留。2026-10-21最终静态回读：estimate_request_tokens已正确序列化messages与tools，prepare内估算、trim两次估算、摘要失败调用裁剪、run_agent两次准备请求均已传齐tools。此前两处漏参已由学员补齐，本节通过静态检查。学员要求确认后休息，本次到这里收束；输出预留与误差余量留待下次，尚未布置实现。函数和调用由学员亲写，教员未改或运行项目，不新增测试或逐点确认。
+
+## 12. 当前动手：为输出分配预算
+
+学员2026-10-21回复继续，按停点进入本节。架构位置为请求前准备与模型请求体。当前prepare_request_messages的max_tokens=200000只作为输入粗估的压缩阈值，不会自动成为HTTP请求的生成上限；三个request_body目前都未显式设置输出max_tokens。
+
+DeepSeek官方API规定，输入与生成的token合计受模型上下文限制，请求体max_tokens限制本次生成的最大token数。项目据此主动分配：应用总预算=输入额度+输出预留+估算缓冲。200000是本项目选择的应用预算，非当前模型标称窗口；2026-10-21官方模型页列deepseek-flash窗口为1M，本练习不使用满窗口。
+
+本次初始配置：CONTEXT_BUDGET=200000，MAX_OUTPUT_TOKENS=8000，TOKEN_MARGIN=2000；INPUT_TOKEN_BUDGET由前三者相减得到190000。数值是项目可调整的配置，未声称为教材或供应商固定标准。输出预留与API上限使用同一MAX_OUTPUT_TOKENS，模型可以提前结束，不会被要求固定生成8000。当前输入仍为粗估，缓冲只是预留空间，不保证任意文本都不会超出真实窗口。
+
+由学员在agent_runner.py实现：
+
+1. 在现有模块顶部配置附近增加上述三个常量，并用表达式计算INPUT_TOKEN_BUDGET，不在多处散写不同额度。
+2. run_agent两次prepare_request_messages调用，将本地max_tokens参数值改为INPUT_TOKEN_BUDGET；让输入超过190000估算值时进入已有摘要/裁剪。
+3. summarize_messages、non_stream_message、stream_message三个request_body均添加"max_tokens":MAX_OUTPUT_TOKENS，给实际模型调用设置输出上限。
+
+讲解时明确同名参数的不同位置：prepare_request_messages的max_tokens是程序定义的输入阈值；request_body中的max_tokens是API规定的输出上限。仅使用已有字段与配置，不代写完整函数。
+
+2026-10-21学员回复完成后静态回读：三个配置与相减表达式正确，两个prepare_request_messages调用使用计算结果，三个request_body均已设置MAX_OUTPUT_TOKENS，接入通过。实际名称拼为INPUT_TOKEN_GUDGET，定义与两处引用一致，不构成功能错误；建议按英文budget改名并同步引用，作为命名建议，不设为过关门槛。教员未修改或运行学生代码。达到输出上限可能以finish_reason=length结束；下一项结合已有completed逻辑处理生成停止原因。摘要输入范围、复用和最新用户请求保留仍按第9章整理，不把本次配置当作完整压缩策略已经完成。
+
+### 预算为什么存在：先解释行为，再记配置
+
+学员说明已照做但不懂用途。本轮先补全理解：模型有输入与生成合计的真实窗口；应用可以选择更小的目标，用于主动限制历史长度与生成规模。200000是沿用项目旧阈值制定的初始策略，不是当前DeepSeek服务端上限，也没有实测证明它是最佳值；短对话不设置这些配置也可能正常工作。学习目的在于知道如何控制策略，不能把四个常量当成所有Agent的固定必备模板。
+
+逐项绑定实际效果：CONTEXT_BUDGET仅参加本地计算，不作为字段发给API；MAX_OUTPUT_TOKENS既留在本地分配中，也随请求发送，限制本次生成；TOKEN_MARGIN仅把本地输入触发线往前移，给粗估留一点余量，不是已经消耗或额外发送的token；INPUT_TOKEN_BUDGET是传给prepare的压缩触发阈值。应用预算200000减生成8000、缓冲2000得到输入阈值190000；输入已包含系统提示、历史、工具说明和工具结果。
+
+用现有代码举例：messages+tools粗估180000时直接用现有消息请求；粗估195000时进入已有摘要流程。这里195000超过的是应用目标，不表示必然超过当前服务商窗口。生成上限8000不要求用满，实际生成500时usage记录实际用量。输入目标过小会更早整理历史，增加摘要调用与信息损失代价；输出上限过小可能截断生成，数值要按任务和实际usage调整。2000只是初始缓冲，不能抵消字符数//4在不同文字中的任意误差，也不替代模型兼容计数。
+
+本轮围绕学员明确的用途卡点讲清整个分配关系，不增加理解复述或运行验收，不据照抄配置判定独立掌握；下一主题为finish_reason，尚未布置实现。
+
+参考：[DeepSeek Chat Completion API](https://api-docs.deepseek.com/api/create-chat-completion/)、[模型参数](https://api-docs.deepseek.com/quick_start/pricing/)。
+
+## 13. 当前动手：用结束原因判断回答是否完整
+
+第12节配置已静态检查通过，INPUT_TOKEN_BUDGET拼写也已统一。学员回复ok后，进入主路径stream_message的内容完整性处理。当前只以[DONE]把stream_completed设True，随后返回(message,True)；API达到生成上限也会正常发[DONE]，因此需要另外读取finish_reason。
+
+2026-10-21核对DeepSeek官方API：finish_reason与delta同在choices[0]内，普通数据块可能为null，最后数据块说明停止原因。常见stop为自然停止/命中停止串，tool_calls为本轮生成工具调用后交回控制，length为达到生成上限；content_filter、insufficient_system_resource、aborted属于其他非正常完成情况。仅收到[DONE]表示传输结束，不能据此确认生成完整，也不能确认任务语义正确或工具已执行。
+
+本项目本轮完整条件定义为：已收到[DONE]，并且最终finish_reason为stop或tool_calls。缺少原因或其他原因不按完整回答返回。工具调用内容的JSON/参数校验仍由现有process_tool_call完成，tool_calls只表示本轮正常交接，不证明参数有效。
+
+由学员在agent_runner.py的stream_message内实现：
+
+1. 读取流前初始化finish_reason=None。每个JSON块解析后取得choice=chunk["choices"][0]，将choice.get("finish_reason")存入finish_reason；现有delta改从choice.get("delta",{})取，正文、工具和usage处理继续。按当前DeepSeek最后JSON块含非null原因的协议直接赋值即可，不强制额外中间变量。
+2. 循环结束后的if not stream_completed改为：未收到结束标记，或finish_reason不在("stop","tool_calls")中，即进入原不完整分支。正常分支仍返回(message,True)，不完整分支保持原返回约定。
+3. 不完整分支继续执行已有策略：有工具调用则丢弃本轮并返回(None,False)，不把截断参数交给工具；只有部分文本时保留已收到文字并返回(partial_message,False)。将原先固定称“流式连接中断”的消息改为准确的通用说明，例如“本次响应未完整结束，内容不完整”；终端可显示finish_reason，便于区分length与其他情况。
+4. 将现有print()换行与usage显示块移到循环结束后、完整性分支之前；达到上限仍可能返回有效统计，提前显示让这些请求的实际用量也可见。
+
+用局部示例说明：最后数据块{"choices":[{"delta":{},"finish_reason":"length"}]}之后仍可跟data:[DONE]，最终stream_completed=True但应返回completed=False。该示例用于解释，不新增测试脚本、故障注入或复述门槛；以后构造成功流mock时，其结束块应带stop/tool_calls，单独[DONE]不满足新完整约定。
+
+学员回复ok后静态回读：finish_reason初始化、双条件完整性判断、通用不完整标记、原因显示和提前显示usage均已接好；此前JSON键chioces已由学员改回choices，本节按主路径实现静态检查通过。直接读取choices[0]有效，不强制中间变量。不完整文本标记只准确说明状态，未知原因不写成某个已确认故障。教员未代改或运行源码，不新增测试或复述门槛；非流式与摘要结束原因在相应请求整理时继续接入。随后进入[第9章](Agent第09章_摘要与当前任务.md)。参考：[DeepSeek停止原因与流式字段](https://api-docs.deepseek.com/api/create-chat-completion/)。
