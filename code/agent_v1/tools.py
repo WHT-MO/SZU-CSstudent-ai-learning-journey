@@ -1,11 +1,14 @@
 from pathlib import Path
+import subprocess
+import sys
 
 from tool_schemas import (
     EditFileArgs,
     ListFilesArgs,
     ReadFileArgs,
     WriteFileArgs,
-    SearchFileArgs
+    SearchFileArgs,
+    RunPythonArgs,
 )
 
 
@@ -101,6 +104,25 @@ def search_file(file_args: SearchFileArgs) -> str:
         return "没有匹配结果"
     return "".join(selected)
 
+#runpython工具
+def run_python(file_args: RunPythonArgs) -> str:
+    script_path = resolve_workspace_path(file_args.path)
+    try:
+        result = subprocess.run( #返回退出码returncode、标准输出stdout、错误输出stderr
+            args=[sys.executable, "-X", "utf8", str(script_path)], #固定解释器和编码
+            cwd=workspace_root, #相对路径起点
+            capture_output=True, #收集stdout、stderr
+            text=True, #读取文字
+            encoding="utf-8", #统一编码
+            stdin=subprocess.DEVNULL, #无需终端输入
+            timeout=5, #子进程运行等待
+            check=False, #非0退出也返回结果对象
+        )
+    except subprocess.TimeoutExpired:
+        raise TimeoutError
+    
+    return f"\n退出码：{result.returncode} \n标准输出：\n{result.stdout} \n错误输出：\n{result.stderr}"
+
 #工具函数表
 tool_functions = {
     "read_file": read_file,
@@ -108,4 +130,5 @@ tool_functions = {
     "list_files": list_files,
     "edit_file": edit_file,
     "search_file": search_file,
+    "run_python": run_python,
 }

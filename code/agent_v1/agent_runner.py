@@ -8,13 +8,19 @@ from pydantic import ValidationError
 from dotenv import load_dotenv
 
 from tool_schemas import tool_arg_models, tool_specs
-from tools import tool_functions
-from tool_events import emit
-
+from tools import tool_functions, workspace_root
+from agent_events import emit
+from session_store import save_session, load_session
 
 URL = "https://api.deepseek.com/chat/completions"
 SYSTEM_PROMPT = "请始终用中文回答用户。工具调用参数必须使用合法 JSON。"
-HISTORY_PATH = Path(__file__).resolve().parent / "session.json"
+AGENTS_PATH = Path(workspace_root) / "AGENTS.md"
+SKILLS_PROMPT = """
+名称：review_python
+用途：审阅 Python 文件的逻辑错误和潜在异常
+路径：skills/review_python/SKILL.md
+指令：任务匹配时，先用 read_file 读取技能文件，再按其中流程处理。
+"""
 
 load_dotenv() #读取API_key
 
@@ -25,47 +31,13 @@ TOKEN_MARGIN = 2000
 
 INPUT_TOKEN_BUDGET = CONTEXT_BUDGET - MAX_OUTPUT_TOKENS - TOKEN_MARGIN
 
-#保存会话历史
-def save_messages(messages):
-    text = json.dumps(
-        messages,
-        ensure_ascii=False,
-        indent=2,
-    )
+#加载AGENTS.md和skills
+def build_system_prompt():
+    if not AGENTS_PATH.exists():
+        return f"{SYSTEM_PROMPT}\n【skills】{SKILLS_PROMPT}"
 
-    temp_path = HISTORY_PATH.with_suffix(".tmp") #原子写入
-
-    try:
-        temp_path.write_text(text,encoding="utf-8")
-        temp_path.replace(HISTORY_PATH)
-    except OSError as error:
-        print(f"会话历史保存失败，本轮内容不会被记忆：{error}")
-
-#读取会话历史
-def load_messages():
-    if not HISTORY_PATH.exists():
-        return []
-
-    try:
-        text = HISTORY_PATH.read_text(encoding="utf-8")
-        messages = json.loads(text)
-    except (OSError, json.JSONDecodeError) as error:
-        print(f"会话历史读取失败，将从新会话开始：{error}")
-        return []
-
-    if not isinstance(messages, list):
-        print("会话历史格式错误，将从新会话开始")
-        return []
-
-    return messages
-
-#清除会话历史
-def clear_session():
-    if HISTORY_PATH.exists():
-        HISTORY_PATH.unlink()
-
-    print("会话历史已清除")
-
+    return f"{SYSTEM_PROMPT}\n【skills】{SKILLS_PROMPT}\n【工作区约定】{AGENTS_PATH.read_text(encoding="utf-8")}"
+    
 #计算tokens估计值
 def estimate_request_tokens(messages, tools):
     request_data = {
@@ -385,7 +357,8 @@ async def stream_message(client: httpx.AsyncClient, messages: list[dict], tools:
                 delta = chunk["choices"][0].get("delta", {})
                 content = delta.get("content")
                 if content:
-                    print(content, end="", flush=True)
+                    event = {"type": "text_delta", "text": content}
+                    await emit(event)
                     content_parts.append(content)
 
                 for call_delta in delta.get("tool_calls", []):
@@ -415,11 +388,8 @@ async def stream_message(client: httpx.AsyncClient, messages: list[dict], tools:
                 if reasoning:
                     reasoning_parts.append(reasoning)
 
-            print()   
-            if usage:
-                print("输入：",usage["prompt_tokens"])
-                print("输出：",usage["completion_tokens"])
-                print("合计：",usage["total_tokens"])
+            event = {"type": "model_response_end", "usage": usage}
+            await emit(event)
 
             if not stream_completed or finish_reason not in ("stop", "tool_calls"):
                 if tool_calls:
@@ -598,7 +568,7 @@ async def execute_validated_tool(
 async def execute_tool_batch(valid_tools):
     has_write = False #判断是否有文件修改
     for item in valid_tools:
-        if item[2] == tool_functions["write_file"] or item[2] == tool_functions["edit_file"]:
+        if item[2] == tool_functions["write_file"] or item[2] == tool_functions["edit_file"] or item[2] == tool_functions["run_python"]:
             has_write = True
 
     if has_write == True: #处理工具调度
@@ -643,24 +613,25 @@ def make_tool_result(tool_call_id: str, content: str) -> dict:
     }
 
 #Agent Loop结构
-async def run_agent(user_prompt: str, max_turns: int = 10) -> None:
-    messages = load_messages()
+async def run_agent(user_prompt: str, max_turns: int = 10) -> dict|None:
+    messages, summary_cache = load_session()
     if not messages or messages[0].get("role") != "system": #植入agent规则
         messages.insert(0, {
             "role": "system",
-            "content": SYSTEM_PROMPT,
+            "content": build_system_prompt(),
         })
+        summary_cache = { #摘要缓存
+            "summary": None,
+            "next_message_index": 1,
+            }
 
+    messages[0]["content"] = build_system_prompt()
     messages.append({
         "role": "user",
         "content": user_prompt,
     })
-    save_messages(messages)
+    save_session(messages, summary_cache)
 
-    summary_cache = { #摘要缓存
-        "summary": None,
-        "next_message_index": 1,
-        }
     tools = build_tools_payload()
     turn_count = 0
 
@@ -672,6 +643,9 @@ async def run_agent(user_prompt: str, max_turns: int = 10) -> None:
             summary_cache=summary_cache,
             max_tokens=INPUT_TOKEN_BUDGET
         )
+        
+        save_session(messages, summary_cache)
+
         if not request_messages:
             return
         
@@ -681,13 +655,13 @@ async def run_agent(user_prompt: str, max_turns: int = 10) -> None:
             if not completed: #响应不完整
                 if not message.get("tool_calls"):
                     messages.append(message)
-                    save_messages(messages)
-                return
+                    save_session(messages, summary_cache)
+                return 
 
             if not message.get("tool_calls"): #返回回答
                 messages.append(message)
-                save_messages(messages)
-                return
+                save_session(messages, summary_cache)
+                return message
 
             tool_results = [None] * len(message["tool_calls"])
             valid_tools = []
@@ -705,7 +679,7 @@ async def run_agent(user_prompt: str, max_turns: int = 10) -> None:
                     )
                 messages.append(message)
                 messages.extend(tool_results)
-                save_messages(messages)
+                save_session(messages, summary_cache)
                 return
             
             turn_count += 1
@@ -740,7 +714,7 @@ async def run_agent(user_prompt: str, max_turns: int = 10) -> None:
 
             messages.append(message)
             messages.extend(tool_results)
-            save_messages(messages)
+            save_session(messages, summary_cache)
 
             request_messages = await prepare_request_messages(
                 client,
@@ -749,18 +723,10 @@ async def run_agent(user_prompt: str, max_turns: int = 10) -> None:
                 summary_cache=summary_cache,
                 max_tokens=INPUT_TOKEN_BUDGET
             )
+            
+            save_session(messages, summary_cache)
+
             if not request_messages:
                 return
             
             message, completed = await stream_message(client, request_messages, tools) #再次请求
-
-
-if __name__ == "__main__":
-    user_prompt = input("请输入任务：").strip()
-
-    if user_prompt == "/reset":
-        clear_session()
-    elif not user_prompt:
-        print("任务不能为空")
-    else:
-        asyncio.run(run_agent(user_prompt))

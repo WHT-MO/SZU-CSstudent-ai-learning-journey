@@ -51,6 +51,8 @@ AGENTS.md是保存项目规则的文件；system是请求消息中的role。模�
 
 当前Python Agent用SYSTEM_PROMPT初始化首条system消息，尚无自动加载AGENTS.md的实现。今后若把自定义规则文件内容读入system的content，它才成为该Agent系统提示的一部分。当前先完成摘要分区，不增加规则文件加载功能。
 
+2026-10-22后续补正：上段记录的是当时停点。后续开始规则文件加载练习时，按教材Pi方案选择将学员自己的工作区约定组装到system；这是本项目的宿主设计，Codex CLI官方文档中的user注入说明仍成立。AGENTS.md来源与API角色必须分别说明，不将本练习方式推广成所有Agent的固定约定。当前实现审阅与来源对照见[项目规则与系统提示第7节](Agent第08章_项目规则与系统提示.md#7-来源与消息角色释疑以及第三次回读)。
+
 ## 5. 接入摘要请求（已静态通过）
 
 架构位置：完整会话messages → prepare_request_messages准备本次请求 → stream_message请求模型。输入为完整messages、tools和max_tokens；准备函数返回消息列表，无法保留当前轮次时返回None。完整会话仍由run_agent保存，准备函数只构造请求视图。
