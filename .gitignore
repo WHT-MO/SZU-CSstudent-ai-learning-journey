@@ -12,10 +12,17 @@ venv/
 
 # Agent 本地会话和工作区中的个人文件
 code/agent_v1/session.json
+code/agent_v1/sessions/
 code/agent_v1/workspace/*
 !code/agent_v1/workspace/ideas/
 !code/agent_v1/workspace/ideas/todo.txt
 !code/agent_v1/workspace/study.txt
+!code/agent_v1/workspace/AGENTS.md
+!code/agent_v1/workspace/skills/
+code/agent_v1/workspace/skills/*
+!code/agent_v1/workspace/skills/review_python/
+code/agent_v1/workspace/skills/review_python/*
+!code/agent_v1/workspace/skills/review_python/SKILL.md
 
 # 编辑器/系统
 .vscode/

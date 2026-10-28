@@ -9,6 +9,7 @@ from agent_events import listeners
 
 class ChatRequest(BaseModel):
     prompt: str
+    session_id: str = "default"
 
 app = FastAPI() #创建Web应用实例
 agent_lock = asyncio.Lock() #全局锁
@@ -17,8 +18,9 @@ agent_lock = asyncio.Lock() #全局锁
 async def chat(data: ChatRequest): #接收API请求
     queue = asyncio.Queue()
     prompt = data.prompt
+    session_id = data.session_id
 
-    task = asyncio.create_task(run_agent_to_queue(prompt, queue))
+    task = asyncio.create_task(run_agent_to_queue(prompt, queue, session_id))
 
     return StreamingResponse(
         stream_events(queue, task),
@@ -44,13 +46,13 @@ async def stream_events(queue, task): #返回SSE事件流
             pass
 
 
-async def run_agent_to_queue(prompt, queue): #事件放入队列
+async def run_agent_to_queue(prompt, queue, session_id: str = "default"): #事件放入队列
     listener = queue.put
     async with agent_lock:
         listeners.append(listener)
 
         try:
-            result = await run_agent(prompt)
+            result = await run_agent(prompt, session_id=session_id)
             await queue.put({
                 "type": "agent_done",
                 "result": result,

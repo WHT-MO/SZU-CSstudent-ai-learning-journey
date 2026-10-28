@@ -2,24 +2,34 @@
 
 从 Python 基础出发，亲手搭建一个能调用模型、执行文件工具、保存会话的 Agent。当前按 [Pi 教程](https://www.dgzhuya.com/modules/ch01-overview) 的思路学习，用 Python 实现并理解循环、工具、消息、事件和上下文管理。
 
-**当前主线：Agent v1 · HTTP事件流与Python客户端。** Python 基础课程与算法题记录见 [历史归档](docs/Python学习阶段归档.md)。
+**当前主线：Agent 进阶 · 工具决策钩子与只读模式。** Python 基础课程与算法题记录见 [历史归档](docs/Python学习阶段归档.md)。
 
-## 当前进度 · 2026-10-22
+## 当前进度 · 2026-10-27
 
 | 部分 | 当前实现 |
 | --- | --- |
 | 模型与循环 | DeepSeek API、异步请求、流式正文与工具调用解析、工具轮数限制、连续用户输入 |
+| 模块边界（进阶） | 模型请求、解析与摘要在model_client中，runner保留上下文、工具和循环，输出额度来源统一；已静态通过 |
+| 执行策略（进阶） | 正在实现工具执行前允许或拒绝的回调，先接核心机制，再接两个入口的只读模式选择 |
 | 工具执行 | 参数校验、路径约束、普通错误隔离、等待超时与取消传播 |
 | 批次调度 | 含写入、编辑或脚本运行时整批顺序执行；其余只读工具并发执行，按输入顺序返回结果 |
 | 执行通知 | 工具开始与结束事件、四种结束状态、逐监听器异常隔离 |
 | 读取与搜索 | 按行范围读取、带行号的单文件搜索、单条工具结果默认 50 KiB 体积保护 |
 | 会话与摘要 | 原始历史及摘要缓存保存/恢复、当前轮原文保留、覆盖位置、请求视图与摘要增量更新 |
+| 多会话（进阶） | 独立会话存档、Agent传递、CLI及HTTP客户端选择、服务端接收均已静态通过 |
+| 请求控制（进阶） | HTTP客户端与直接CLI的异步输入、单后台Task、/stop及退出清理均已静态通过；CLI /reset受空闲判断保护 |
 | 预算与完整性 | messages 与 tools 一起粗估 token、输入与输出额度分配、单次 usage 显示、流式及非流式结束原因检查 |
-| 本机HTTP入口 | FastAPI POST /chat、共享会话锁；SSE文字片段、用量事件与完整结果已有运行截图 |
+| 本机HTTP入口 | FastAPI POST /chat、共享会话锁；SSE及Python客户端文字、工具进度显示均已有运行截图 |
 
-**本次停点：** run_python实际使用已完成；本机HTTP事件流已有text_delta、model_response_end及agent_done的运行截图，服务端本节目标完成。具体证据见[当前状态](memory/02_当前状态.md)。
+**本次停点：** 模型调用模块迁移已整体静态通过；当前开始执行前决策回调与只读策略，尚未实现。多会话及两个入口主动停止保持完成，具体记录见[当前状态](memory/02_当前状态.md)。
 
-**当前动手：** [Python HTTP客户端](docs/Agent实战篇_HTTP客户端.md)。新增http_client.py，用已有HTTPX流式读取本机/chat，将text_delta显示为连续文字，并返回agent_done.result。客户端当前尚未编写。
+**当前动手：** [工具决策钩子与只读模式](docs/Agent进阶04_工具决策钩子与只读模式.md)。由学员定义read_only_guard，并让run_agent将before_tool交给工具调用检查；拒绝或检查失败时生成tool结果，原调用不进入执行列表。
+
+**已完成：** [主动停止当前任务](docs/Agent进阶02_主动停止当前请求.md#11-本节完成结果)。请求在后台运行，/stop取消并等待当前Task收尾，输入循环继续接收命令；两个入口都保留单活跃任务。
+
+**上一节结果：** [多会话存储与入口选择](docs/Agent进阶01_多会话存储.md#12-本节完成结果)。入口选定会话名后，加载与保存始终指向同一段历史；默认会话继续使用原存档。
+
+**本次调整：** 撤下Python专用搜索工具练习。现有list_files、search_file与read_file可以组合完成定位和阅读；批量目录搜索按实际需要再扩展，见[方案说明](docs/Agent第08章_跨Python文件搜索.md)。
 
 ## Agent v1 的文件与脚本工具
 
@@ -42,10 +52,16 @@
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install httpx "pydantic>=2,<3" python-dotenv
+.\.venv\Scripts\python.exe -m pip install -r requirement.txt
 ```
 
-在仓库根目录新建 `.env`：
+新环境首次配置时，在仓库根目录复制模板：
+
+```powershell
+Copy-Item .env.example .env
+```
+
+再编辑 `.env`，将占位值换为自己的密钥：
 
 ```dotenv
 DEEPSEEK_API_KEY=替换为自己的密钥
@@ -57,26 +73,25 @@ DEEPSEEK_API_KEY=替换为自己的密钥
 .\.venv\Scripts\python.exe code\agent_v1\cli.py
 ```
 
-输入任务，例如：“在工作区新建 hello.txt，写入‘你好，Agent’，再读取这个文件。”每条任务完成后继续接收下一条；输入 `/reset` 清除会话历史，输入 `/exit` 退出。启动后处理任务时会加载已有历史。
+输入任务，例如：“在工作区新建 hello.txt，写入‘你好，Agent’，再读取这个文件。”任务在后台运行，期间可以输入控制命令；忙碌时普通新任务会提示先停止当前任务。输入 `/stop` 取消并等待当前任务收尾，`/session study` 选择下一次任务的会话，`/session` 显示当前选择，`/reset` 在空闲时清除当前会话历史，`/exit` 退出并由运行器清理剩余Task。启动时选择default，处理任务时加载所选会话已有的历史；多会话和主动停止功能依据静态审阅。
 
-密钥文件、运行时会话与工作区中的个人文件按 [.gitignore](.gitignore) 排除；示例学习文件按现有规则保留。
+密钥文件、运行时会话与工作区中的个人文件按 [.gitignore](.gitignore) 排除；固定工作区约定AGENTS.md与review_python/SKILL.md已允许纳入后续提交。
 
 ### 本机HTTP入口
 
-额外安装FastAPI与Uvicorn，在项目根目录运行：
+上方依赖清单已包含FastAPI与Uvicorn，在项目根目录运行：
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install fastapi uvicorn
 .\.venv\Scripts\python.exe -m uvicorn http_api:app --app-dir code\agent_v1 --host 127.0.0.1 --port 8000 --workers 1
 ```
 
-当前/chat已改为SSE事件流，连接及任务收尾静态通过。保持服务终端运行，在另一个PowerShell中提交任务并查看事件：
+当前/chat返回SSE事件流。保持服务终端运行，在另一个PowerShell中运行Python客户端：
 
 ```powershell
-'{"prompt":"Say hello in three short sentences."}' | curl.exe -sS -N -H "Content-Type: application/json" --data-binary "@-" "http://127.0.0.1:8000/chat"
+.\.venv\Scripts\python.exe code\agent_v1\http_client.py
 ```
 
-text_delta发送文字片段，agent_done.result保存最终消息（未取得时为null），普通未处理异常通过agent_error.message发送。当前沿用同一份session.json，完整任务由进程内共享锁顺序处理，使用单worker运行。普通JSON入口和当前SSE入口均已有学员成功运行截图。
+输入任务后，客户端在后台处理一个请求，同时接收输入。输入/session study选择下一次请求的会话，/session查看当前选择，/stop取消并等待当前客户端请求收尾，/exit先清理请求再退出；忙碌时提示先停止当前请求再启动新任务。text_delta发送文字片段，agent_done.result保存最终消息（未取得时为null），普通未处理异常通过agent_error.message发送。服务端按请求的session_id选择历史，省略时使用default；客户端发送所选会话名。服务端完整任务由进程内共享锁顺序处理，使用单worker运行。普通JSON入口、SSE及Python客户端文件任务均已有学员成功运行截图，多会话及主动停止流程依据静态审阅。
 
 ## 项目入口
 
@@ -84,9 +99,12 @@ text_delta发送文字片段，agent_done.result保存最终消息（未取得�
 | --- | --- |
 | [cli.py](code/agent_v1/cli.py) | 终端输入、命令分流、显示监听器及登记 |
 | [http_api.py](code/agent_v1/http_api.py) | HTTP请求模型、共享锁、事件队列、流式响应与Task收尾 |
-| [agent_runner.py](code/agent_v1/agent_runner.py) | 模型请求、流式解析、Agent Loop、工具调度与会话管理 |
+| [http_client.py](code/agent_v1/http_client.py) | 输入任务、读取本机SSE、显示文字及取得最终消息 |
+| [agent_runner.py](code/agent_v1/agent_runner.py) | 上下文准备、Agent Loop、工具调度与会话管理，调用模型模块 |
+| [model_client.py](code/agent_v1/model_client.py) | 模型HTTP请求、流式与非流式解析、摘要生成及模型输出事件 |
 | [session_store.py](code/agent_v1/session_store.py) | 会话历史与摘要状态的保存、加载及清除 |
-| [tool_schemas.py](code/agent_v1/tool_schemas.py) | 工具说明、参数模型与注册 |
+| [tool_schemas.py](code/agent_v1/tool_schemas.py) | AgentTool结构及工具参数模型 |
+| [tool_registry.py](code/agent_v1/tool_registry.py) | 集中登记工具资料，生成参数类、函数、模型说明及顺序策略 |
 | [tools.py](code/agent_v1/tools.py) | 文件及Python脚本工具实现与路径处理 |
 | [agent_events.py](code/agent_v1/agent_events.py) | 监听器列表与事件分发 |
 

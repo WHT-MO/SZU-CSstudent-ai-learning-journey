@@ -1,10 +1,25 @@
 import json
+import re
 from pathlib import Path
 
 HISTORY_PATH = Path(__file__).resolve().parent / "session.json"
+SESSION_DIR = Path(__file__).resolve().parent / "sessions"
+
+#多会话选择路径
+def get_session_path(session_id: str = "default") -> Path:
+    match = re.fullmatch(r"[A-Za-z0-9_-]+", session_id) #检查名字
+
+    if match is None:
+        raise ValueError
+    elif session_id == "default":
+        return HISTORY_PATH
+    else:
+        return SESSION_DIR / f"session_{session_id}.json"
 
 #保存会话历史
-def save_session(messages, summary_cache):
+def save_session(messages, summary_cache, session_id="default"):
+    history_path = get_session_path(session_id)
+
     text = json.dumps(
         {
             "messages": messages,
@@ -14,21 +29,24 @@ def save_session(messages, summary_cache):
         indent=2,
     )
 
-    temp_path = HISTORY_PATH.with_suffix(".tmp") #原子写入
+    temp_path = history_path.with_suffix(".tmp") #原子写入
 
     try:
-        temp_path.write_text(text,encoding="utf-8")
-        temp_path.replace(HISTORY_PATH)
+        history_path.parent.mkdir(parents=True, exist_ok=True) #创建父目录
+        temp_path.write_text(text,encoding="utf-8") #写入文件
+        temp_path.replace(history_path)
     except OSError as error:
         print(f"会话历史保存失败，本轮内容不会被记忆：{error}")
 
 #读取会话历史
-def load_session():
-    if not HISTORY_PATH.exists():
+def load_session(session_id="default"):
+    history_path = get_session_path(session_id)
+
+    if not history_path.exists():
         return [], {"summary": None, "next_message_index": 1}
 
     try:
-        text = HISTORY_PATH.read_text(encoding="utf-8")
+        text = history_path.read_text(encoding="utf-8")
         history = json.loads(text)
         if isinstance(history, dict):
             messages = history.get("messages")
@@ -49,8 +67,10 @@ def load_session():
     return messages, summary_cache
 
 #清除会话历史
-def clear_session():
-    if HISTORY_PATH.exists():
-        HISTORY_PATH.unlink()
+def clear_session(session_id="default"):
+    history_path = get_session_path(session_id)
+
+    if history_path.exists():
+        history_path.unlink()
 
     print("会话历史已清除")

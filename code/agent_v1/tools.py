@@ -122,13 +122,3 @@ def run_python(file_args: RunPythonArgs) -> str:
         raise TimeoutError
     
     return f"\n退出码：{result.returncode} \n标准输出：\n{result.stdout} \n错误输出：\n{result.stderr}"
-
-#工具函数表
-tool_functions = {
-    "read_file": read_file,
-    "write_file": write_file,
-    "list_files": list_files,
-    "edit_file": edit_file,
-    "search_file": search_file,
-    "run_python": run_python,
-}

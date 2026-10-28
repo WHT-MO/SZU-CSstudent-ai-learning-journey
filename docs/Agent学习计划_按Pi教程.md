@@ -80,6 +80,7 @@
 - 区分执行顺序与结果排列；先用独立只读调用和同文件修改的例子理解依赖。
 - 根据理解确定简单调度规则；需要更细并发时再考虑按文件排队。
 - 当前应用：[运行Python脚本工具](Agent第05章_运行Python脚本工具.md)实现已静态通过，实际使用也已完成。截图、会话tool返回及报告一致：退出码0，stdout为三个预期演示分支，stderr为空，随后追加报告并回读。
+- [统一工具注册](Agent第05章_统一工具注册.md)及执行策略已静态通过：三种原结构与serial_tool_functions生成正确，旧登记移除、runner导入及函数成员判断接通。
 - 验收：有效调用能执行；有 ID 的工具错误能关联回模型；说明线程超时或取消等待后，底层操作是否真正停止。
 
 ### 第 6 章：消息系统——内部状态与模型边界
@@ -110,6 +111,7 @@
 - 先按任务选择读取策略，完整说明小文件整读、结构/搜索定位后按需读取、全面审阅覆盖的适用范围与调用、遗漏成本。
 - 首项动手：[读取策略与行范围接口](Agent第08章_大工具输出与分段读取.md)，read_file 增加 start_line=1、end_line=None，能直接跳转相关行；原 4000 字符顺序分页练习撤下，不要求先实现再改写。
 - 随后接带行号的简单搜索，以及单次输出体积兜底，形成定位、展开、必要时补读的流程。结构概览按需求增加，不把复杂索引作为当前前置；行范围能力不能单独保证结果体积上限。
+- 搜索方案修订：[跨文件搜索与现有工具](Agent第08章_跨Python文件搜索.md)。Python专用搜索工具练习已撤下。现有list_files、search_file与read_file可组合完成定位和阅读；批量搜索的收益在于减少调用次数，确有需要时优先扩展通用搜索，并将文件类型作为筛选条件。
 - 学习请求预算，区分 token 粗估与 API 实际用量。当前 Python 项目的具体练习安排为：字节保护完成后读取 usage 观察实际消耗，再整理 tools、输出预留与误差余量。请求预算与实际用量的区别是原计划内容（已提交版本789023f），这项动手任务是围绕当前实现细化的教学安排；本地精确分词按模型兼容性与实际需要再接。当前 JSON 字符数 //4 仅为粗估。
 - 项目上下文组织：[项目规则与系统提示](Agent第08章_项目规则与系统提示.md)已静态通过。build_system_prompt读取本人维护的workspace/AGENTS.md并按教材Pi方案与固定规则组装，每个用户任务开始时刷新首条system；Codex CLI的user注入作为不同宿主实现已讲清。
 - 当前结果：[技能目录与按需加载](Agent第08章_技能目录与按需加载.md)静态接入及实战已通过。会话记录确认实际读取技能正文；学员已补充版本、用途、范围与触发路径要求，第2版审阅报告已完成并回读。采用单项静态目录，无额外依赖。
@@ -141,7 +143,60 @@
 - 核心机制已实现一轮并完成文件审阅与脚本执行实战；继续区分实现、实测和独立掌握。
 - 本项目用FastAPI接收POST /chat的JSON prompt，复用run_agent并返回最终消息；Uvicorn提供本机服务入口。
 - 使用Pydantic请求模型与一把进程内共享锁，对现有单会话文件的完整调用进行串行保护，服务以单worker运行。
-- 任务结束后返回消息的HTTP入口及[HTTP事件流](Agent实战篇_HTTP事件流.md)均已有学员实际使用截图；当前[Python客户端](Agent实战篇_HTTP客户端.md)复用HTTPX读取事件并显示文字。教材SDK示例用于职责对照，具体实现沿用当前Python运行时。
+- 任务结束后返回消息的HTTP入口、[HTTP事件流](Agent实战篇_HTTP事件流.md)及[Python客户端](Agent实战篇_HTTP客户端.md)均已有学员实际使用截图。客户端已能读取SSE并显示文字；read_file文件任务截图也已展示工具开始、同一调用编号的success结束状态及概括回答，本阶段目标完成。教材SDK示例用于职责对照，具体实现沿用当前Python运行时。
+- [HTTP客户端第9节](Agent实战篇_HTTP客户端.md#9-连续输入任务)已静态通过：main/while逐条await request_agent，/exit退出，底部asyncio.run(main())启动；历史继续由现有服务端维护。
+- 第10节HTTP异常处理已静态通过：每轮await外捕获httpx.HTTPError，显示原因后继续输入。已区分HTTP调用异常与服务端SSE的agent_error通知；换行属于排版取舍。
+- 第11节无完整回答提示已静态通过：agent_done.result为None时显示说明并return None，成功消息返回原值，正文不重复打印。客户端实现整理完成，不增加故障注入或测试脚本。
+- 后续实跑已展示读技能、列目录、读源码的工具事件，最后因模型生成长度限制回None并重新出现输入提示；学员确认这些证据足以证明客户端接通，本阶段收尾。
+
+### 应用整理：依赖与运行说明
+
+- 接下方工程要求中的“运行说明、依赖和示例”，讲义见[依赖与运行说明](Agent实战篇_依赖与运行说明.md)。
+- 学员已创建根目录requirement.txt，五个直接依赖httpx、pydantic、python-dotenv、fastapi、uvicorn及Pydantic的>=2,<3要求静态正确。文件名可自定，README已按实际名称统一安装命令，不另行要求HTTP库安装。
+- 根目录.env.example的DEEPSEEK_API_KEY占位值已静态通过，README已改为首次配置时复制模板为.env后填写。
+- 固定规则与技能的Git保存范围已调整正确：workspace/AGENTS.md及skills/review_python/SKILL.md已通过逐层例外允许纳入后续提交，git status列出两文件；当前未提交上传。本节整理完成，不为已能运行的环境安排重装或新环境测试。
+
+### 阶段实战：通过HTTP客户端审阅代码
+
+- 本次记录见[HTTP客户端审阅](Agent阶段实战_HTTP客户端审阅.md)：学员已复制http_client.py并通过HTTP客户端读取技能和源码，报告尚未生成。
+- 明确Python 3.12+、单会话、单行data JSON的既有SSE约定，以及服务端执行工具和保存历史的职责；报告列出位置、触发条件与影响，区分缺陷/扩展/风格。
+- 服务端日志finish_reason为length，当前模型默认高强度思考与8000生成上限需按用途配置；问题已记录，未修改模型参数。学员明确客户端已证明接通，要求进入下一步，报告不再作为当前门槛，也不追加故障场景或模型请求。
+
+### 进阶阶段：多会话与状态隔离
+
+- Agent v1核心机制已覆盖一轮，HTTP服务和客户端已接通，进入有明确目标的进阶阶段；实现、运行证据与独立掌握仍分别记录。
+- 目标：按session_id选择一段对话，每段分别保存messages和summary_cache，能够恢复和清除。
+- 存储层[多会话存储](Agent进阶01_多会话存储.md)已静态通过。default继续使用原session.json，其他会话使用sessions/session_<id>.json；名字检查限定为非空英文字母、数字、下划线、连字符，保存时创建父目录，临时文件和replace目标均由本次路径生成。
+- run_agent会话名传递已静态通过：原两个参数后新增session_id默认值default，一次load_session和现有七处save_session均显式传入同一个session_id。当前仍采用JSON文件，在原项目中增量实现；HTTP并发策略单独处理。
+- CLI已静态通过：保存current_session_id、提示当前名、/session查看或切换、检查前清除参数空格、错误保留旧选择，任务与/reset传当前名。argument.strip在有参else内也正确，不为位置或continue增设修改。
+- HTTP服务端静态通过：ChatRequest默认会话字段、chat取局部值、Task内wrapper第三个位置参数及锁内run_agent传递均正确，不强求改成关键字调用。
+- 客户端request_agent参数、正文两字段、main选择状态、普通任务传参、独立正则及输入strip均已静态通过。至此存储→Agent→CLI/HTTP→客户端的多会话实现完整，本节完成。源码由学员亲写，没有新增运行、测试或模型请求；不把静态通过记为实跑通过，不追加必做项。
+
+### 进阶阶段：两个入口主动停止任务
+
+- 当前真实缺口：main直接await request_agent，任务结束后才读下一条命令；直接input还会阻塞事件循环。
+- 本项目练习见[主动停止当前请求](Agent进阶02_主动停止当前请求.md)：用to_thread等待键盘输入，后台Task运行请求，保存请求Task引用，/stop取消并等待，/exit清理后退出，一个客户端只保留一个活跃请求。
+- 前置已合并说明：Task的来源、done/cancel/await各自含义，输入返回值的strip，后台异常不再由创建位置的try捕获，因此增加run_request显示普通失败；cancel_request接Task并返回是否停止了活跃请求。
+- 已静态核对HTTPX退出流时关闭响应，本机Uvicorn ASGI 2.3和Starlette断连分支，以及服务端已有finally清理；线程工具和已写入文件仍有既定取消边界。未实跑新入口。
+- 学员追问CLI入口，已明确两个独立入口都纳入本节：先完成http_client.py，再将异步输入、后台run_agent Task、/stop与/exit接到cli.py；CLI的/reset在当前任务结束或停止后执行。源码由学员亲写，两段静态正确后本节完成，不增加测试脚本或模型请求。多会话一节不重复验收。
+- HTTP客户端主动停止已整体静态通过：空闲条件使用None or done，取消助手接住CancelledError后继续return True；后台run_request继续传播取消，停止提示、退出清理及异步输入均正确，未新增实跑证据。
+- CLI已静态通过：run_agent显式传session_id，/reset使用None or done空闲判断；后台助手、取消助手、异步输入、Task及/stop均正确。当前脚本的/exit直接break由asyncio.run关闭时取消并等待剩余Task，已核对CPython源码，接受此实现。至此两个入口都完成，本节没有待改源码或额外必做项。
+
+### 进阶阶段：独立模型调用模块
+
+- 整理前，模型HTTP、流式解析、非流式解析及摘要请求与循环和上下文控制同在agent_runner.py，已有mock也由runner导入请求函数。
+- 本项目练习见[模型调用模块与依赖方向](Agent进阶03_模型调用模块.md)：将extract_message、non_stream_message、stream_message、summarize_messages及URL、MAX_OUTPUT_TOKENS、dotenv初始化迁入model_client.py；新模块从agent_events导入emit，不反向导入runner。
+- runner导入流式请求、摘要函数及输出额度，继续管理HTTPX客户端生命周期、输入预算和摘要缓存；保留httpx、asyncio、json及工具事件emit，清理迁出的os/dotenv等依赖。
+- 现有输出额度读取为20000、上下文200000、余量10000，本节按现有设置迁移。两个已有mock只更新导入来源，无新增用例或执行要求。
+- 源码由学员亲写，一次完成模块与调用方迁移后静态审阅；模型参数、工具协议及已有返回约定沿用，本节不接多供应商或新SDK。
+- runner导入名称已修正为summarize_messages，迁移、依赖、常量来源及两个mock导入均已整体静态通过，进阶第3节完成。没有待改源码或额外必做项，本次未运行或测试。
+
+### 进阶阶段：工具决策钩子与只读模式
+
+- 对应第7章观察通知与决策回调的区别：当前emit忽略返回值且隔离普通显示错误，执行前回调需读取返回值并据此允许或拒绝。
+- 当前动手见[工具决策钩子与只读模式](Agent进阶04_工具决策钩子与只读模式.md)：新增tool_policies.py的普通def read_only_guard(tool_name, validated_args)，None允许，字符串拒绝；明确允许read/list/search，写/编辑/脚本被拒绝，不借调度字段推导权限。
+- run_agent和process_tool_call追加before_tool=None，前者显式向后者传递；参数校验后、valid_tools.append前调用，拒绝或检查失败时写入原索引的tool结果并return，允许才进执行列表。
+- 第一段核心机制通过后，继续覆盖CLI及HTTP两个入口的普通/只读选择，默认普通，策略随每次任务参数传入。两段静态正确后本节完成，不新增测试或模型请求，已有章节不重复验收。
 
 ## 4. 持续保留的工程要求
 
@@ -163,4 +218,4 @@
 
 ## 6. 下一步
 
-2026-10-22保存停点：run_python、普通HTTP及当前SSE均已有学员实际使用证据，最新截图含text_delta、model_response_end/usage及agent_done/result，事件收发目标完成。学员要求先上传当前进度，再继续[Python客户端](Agent实战篇_HTTP客户端.md)：新建http_client.py，用已有HTTPX向本机/chat发送prompt并逐行解析data，显示text_delta，返回agent_done.result或显示agent_error；一次输入调用即可。客户端尚未编写，不追加验证脚本及异常/并发/取消用例；教员未代改源代码、启动服务或请求模型。具体提交以Git记录为准，停点以 `memory/02_当前状态.md` 为准。
+2026-10-27停点：用户要求下一步，当前由学员实现进阶第4节的普通决策回调及只读策略，先接tool_policies与runner的before_tool传递、允许/拒绝/失败回填；通过后再给CLI及HTTP完整模式选择接线。已核对现有工具检查、调度和emit，不扩充全局监听器表或新增事件协议。前三节保持完成，教员未代改或运行源码，没有新增测试、模型请求或Git上传。停点以 `memory/02_当前状态.md` 为准。

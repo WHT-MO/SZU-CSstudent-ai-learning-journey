@@ -2,7 +2,7 @@ import asyncio
 import httpx
 
 import os
-from agent_runner import summarize_messages
+from model_client import summarize_messages
 
 os.environ["DEEPSEEK_API_KEY"] = "test-key"
 
