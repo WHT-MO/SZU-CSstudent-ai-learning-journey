@@ -1,5 +1,7 @@
 # 应用阶段：把Agent事件通过HTTP逐段发送
 
+> 接口更新（2026-10-29）：agent_done仍表示Agent调用已正常返回，其result已改为message/completed/reason三键结果；是否取得完整最终回答由result.completed说明。异常仍用agent_error，取消继续传播。见[进阶第5节](Agent进阶05_运行结果与结束原因.md#9-本节完成结果)。下文保留首次实现及旧返回约定的历史过程。
+>
 > 当前进展：2026-10-22。普通POST /chat及当前SSE入口均已有学员运行截图。最新结果包含多条text_delta、model_response_end/usage及agent_done/result，事件收发链完成。下一项见[Python HTTP客户端](Agent实战篇_HTTP客户端.md)。
 > 教材对照：[实战篇第7章](https://www.dgzhuya.com/modules/pr07-deploy)中的事件订阅与SSE。当前继续使用Python自研运行时。
 

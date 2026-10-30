@@ -5,11 +5,28 @@ import asyncio
 
 from dotenv import load_dotenv
 from agent_events import emit
+from model_config import AGENT_MODEL_CONFIG, SUMMARY_MODEL_CONFIG
 
 URL = "https://api.deepseek.com/chat/completions"
 load_dotenv() #读取API_key
 
-MAX_OUTPUT_TOKENS = 20000
+#模型请求重试判断
+def is_retryable_model_error(error) -> bool:
+    if isinstance(error, httpx.HTTPStatusError):
+        status_code = error.response.status_code
+        if status_code == 429 or status_code == 500 or status_code == 503:
+            return True
+        
+        return False
+
+    elif isinstance(error, httpx.TimeoutException): #请求超时
+        return True
+
+    elif isinstance(error, httpx.NetworkError): #网络故障
+        return True
+
+    else:
+        return False
 
 #非流式响应结构边界检查
 def extract_message(
@@ -45,11 +62,12 @@ async def non_stream_message(client: httpx.AsyncClient, messages: list[dict], to
         return None
 
     request_body = {
-        "model": "deepseek-flash",
+        "model": AGENT_MODEL_CONFIG.model,
         "tools": tools,
         "messages": messages,
         "stream": False,
-        "max_tokens": MAX_OUTPUT_TOKENS,
+        "max_tokens": AGENT_MODEL_CONFIG.max_output_tokens,
+        "reasoning_effort": AGENT_MODEL_CONFIG.reasoning_effort,
     }
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -77,152 +95,168 @@ async def non_stream_message(client: httpx.AsyncClient, messages: list[dict], to
     return None
 
 #流式请求与边界检查
-async def stream_message(client: httpx.AsyncClient, messages: list[dict], tools: list[dict]) -> tuple[dict | None, bool]:
+async def stream_message(client: httpx.AsyncClient, messages: list[dict], tools: list[dict]) -> dict:
+    result = { #响应返回字典
+        "message":  None,
+        "completed": False,
+        "reason": None,
+    }
+
     api_key = os.getenv("DEEPSEEK_API_KEY")
     if not api_key:
         print("缺少 DEEPSEEK_API_KEY")
-        return None, False
+        result["reason"] = "缺少 DEEPSEEK_API_KEY"
+        return result
 
     request_body = {
-        "model": "deepseek-flash",
+        "model": AGENT_MODEL_CONFIG.model,
         "tools": tools,
         "messages": messages,
         "stream": True,
-        "max_tokens": MAX_OUTPUT_TOKENS,
+        "max_tokens": AGENT_MODEL_CONFIG.max_output_tokens,
+        "reasoning_effort": AGENT_MODEL_CONFIG.reasoning_effort,
     }
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
 
-    content_parts = [] #回复内容
-    tool_calls = {} #工具调用
-    reasoning_parts = [] #思考过程
+    for attempt in range(3):
+        content_parts = [] #回复内容
+        tool_calls = {} #工具调用
+        reasoning_parts = [] #思考过程
+        stream_completed = False #流结束检查
+        usage = None #deepseek默认在最后一个JSON块返回tokens统计
+        finish_reason = None #区分流完整结束和异常结束
+        has_emitted_text = False #判断有无失败内容
 
-    stream_completed = False #流结束检查
+        try:
+            async with client.stream(
+                "POST",
+                URL,
+                headers=headers,
+                json=request_body,
+            ) as response:
+                response.raise_for_status()
 
-    try:
-        async with client.stream(
-            "POST",
-            URL,
-            headers=headers,
-            json=request_body,
-        ) as response:
-            response.raise_for_status()
+                async for line in response.aiter_lines(): #流式输出
+                    if not line or not line.startswith("data:"):
+                     continue
+                     
+                    data = line[5:].strip()
 
-            usage = None #deepseek默认在最后一个JSON块返回tokens统计
-            finish_reason = None #区分流完整结束和异常结束
+                    if data == "[DONE]":
+                        stream_completed = True
+                        break
 
-            async for line in response.aiter_lines(): #流式输出
-                if not line or not line.startswith("data:"):
-                    continue
+                    chunk = json.loads(data)
+                    chunk_usage = chunk.get("usage")
+                    if chunk_usage:
+                        usage = chunk_usage
 
-                data = line[5:].strip()
+                    finish_reason = chunk["choices"][0].get("finish_reason")
 
-                if data == "[DONE]":
-                    stream_completed = True
-                    break
+                    delta = chunk["choices"][0].get("delta", {})
+                    content = delta.get("content")
+                    if content:
+                        has_emitted_text = True
+                        event = {"type": "text_delta", "text": content}
+                        await emit(event)
+                        content_parts.append(content)
 
-                chunk = json.loads(data)
-                chunk_usage = chunk.get("usage")
-                if chunk_usage:
-                    usage = chunk_usage
+                    for call_delta in delta.get("tool_calls", []):
+                        index = call_delta["index"]
 
-                finish_reason = chunk["choices"][0].get("finish_reason")
-
-                delta = chunk["choices"][0].get("delta", {})
-                content = delta.get("content")
-                if content:
-                    event = {"type": "text_delta", "text": content}
-                    await emit(event)
-                    content_parts.append(content)
-
-                for call_delta in delta.get("tool_calls", []):
-                    index = call_delta["index"]
-
-                    call = tool_calls.setdefault( #索引不到返回默认值
-                        index,
-                        {
-                            "id": "",
-                            "type": "function",
-                            "function": {
-                                "name": "",
-                                "arguments": "",
+                        call = tool_calls.setdefault( #索引不到返回默认值
+                            index,
+                            {
+                                "id": "",
+                                "type": "function",
+                                "function": {
+                                    "name": "",
+                                    "arguments": "",
+                                },
                             },
-                        },
-                    )
+                        )
 
-                    if call_delta.get("id"):
-                        call["id"] = call_delta["id"]
+                        if call_delta.get("id"):
+                            call["id"] = call_delta["id"]
 
-                    function_delta = call_delta.get("function", {})
+                        function_delta = call_delta.get("function", {})
 
-                    call["function"]["name"] += function_delta.get("name", "")
-                    call["function"]["arguments"] += function_delta.get("arguments", "")
+                        call["function"]["name"] += function_delta.get("name", "")
+                        call["function"]["arguments"] += function_delta.get("arguments", "")
 
-                reasoning = delta.get("reasoning_content")
-                if reasoning:
-                    reasoning_parts.append(reasoning)
+                    reasoning = delta.get("reasoning_content")
+                    if reasoning:
+                        reasoning_parts.append(reasoning)
 
-            event = {"type": "model_response_end", "usage": usage}
-            await emit(event)
+                event = {"type": "model_response_end", "usage": usage}
+                await emit(event)
 
-            if not stream_completed or finish_reason not in ("stop", "tool_calls"):
-                if tool_calls:
-                    print("\n流式响应未完整结束，不保存不完整工具调用")
-                    return None, False
+                if not stream_completed or finish_reason not in ("stop", "tool_calls"):
+                    if not stream_completed:
+                        result["reason"] = "流式响应缺少结束标记"
+                    else:
+                        result["reason"] = f"流式响应异常结束，原因：{finish_reason}"
 
-                if not content_parts and not reasoning_parts:
-                    return None, False
+                    if tool_calls:
+                        print("\n流式响应未完整结束，不保存不完整工具调用")
+                        return result
 
-                partial_message = {
+                    if not content_parts and not reasoning_parts:
+                        return result
+
+                    partial_message = {
+                        "role": "assistant",
+                        "content": (
+                            "".join(content_parts)
+                            + "\n[本轮响应未完整结束，内容不完整]"
+                        ),
+                    }
+
+                    if reasoning_parts:
+                        partial_message["reasoning_content"] = "".join(reasoning_parts)
+
+                    print(f"\n本轮响应未完整结束，保存已收到内容，异常结束原因：{finish_reason}")
+
+                    result["message"] = partial_message
+                    return result
+
+                message = {
                     "role": "assistant",
-                    "content": (
-                        "".join(content_parts)
-                        + "\n[本轮响应未完整结束，内容不完整]"
-                    ),
+                    "content": "".join(content_parts),
                 }
 
+                if tool_calls:
+                    message["tool_calls"] = [
+                        tool_calls[index]
+                        for index in sorted(tool_calls)
+                    ]
+
                 if reasoning_parts:
-                    partial_message["reasoning_content"] = "".join(reasoning_parts)
+                    message["reasoning_content"] = "".join(reasoning_parts)
 
-                print(f"\n本轮响应未完整结束，保存已收到内容，异常结束原因：{finish_reason}")
-                return partial_message, False
+                result["message"] = message
+                result["completed"] = stream_completed
+                return result
 
-            message = {
-                "role": "assistant",
-                "content": "".join(content_parts),
-            }
+        except asyncio.CancelledError: #传递取消信号->run_agent()
+            raise
 
-            if tool_calls:
-                message["tool_calls"] = [
-                    tool_calls[index]
-                    for index in sorted(tool_calls)
-                ]
+        except httpx.HTTPError as error:
+            if is_retryable_model_error(error) is False or attempt == 2 or has_emitted_text == True:
+                result["reason"] = f"流式请求失败{type(error).__name__}：{error}"
+                print(result["reason"])
+                return result
 
-            if reasoning_parts:
-                message["reasoning_content"] = "".join(reasoning_parts)
+            print("请求失败，正在重试")
+            await asyncio.sleep(2 ** attempt)
 
-            return message, True
-
-    except asyncio.CancelledError: #传递取消信号->run_agent()
-        raise
-
-    except httpx.TimeoutException:
-        print("流式请求超时")
-        return None, False
-
-    except httpx.HTTPStatusError as error:
-        print(f"流式 API 请求失败：{error.response.status_code}")
-        return None, False
-
-    except httpx.RequestError as error:
-        print(f"流式网络请求失败：{error}")
-        return None, False
-
-    except (json.JSONDecodeError, KeyError, TypeError) as error:
-        print(f"流式响应解析失败：{error}")
-        return None, False
+        except (json.JSONDecodeError, KeyError, TypeError) as error:
+            result["reason"] = f"流式响应解析失败：{error}"
+            print(result["reason"])
+            return result
 
 #生成旧历史摘要
 async def summarize_messages(client, messages):
@@ -253,10 +287,11 @@ async def summarize_messages(client, messages):
     ]
 
     request_body = {
-        "model": "deepseek-flash",
+        "model": SUMMARY_MODEL_CONFIG.model,
         "messages": summary_messages,
         "stream": False,
-        "max_tokens": MAX_OUTPUT_TOKENS,
+        "max_tokens": SUMMARY_MODEL_CONFIG.max_output_tokens,
+        "reasoning_effort": SUMMARY_MODEL_CONFIG.reasoning_effort,
     }
 
     headers = {
@@ -286,23 +321,12 @@ async def summarize_messages(client, messages):
         except asyncio.CancelledError:
             raise
 
-        except (httpx.TimeoutException, httpx.RequestError) as error:
-            if attempt == 2:
-                print(f"请求最终失败：{error}")
+        except httpx.HTTPError as error:
+            if is_retryable_model_error(error) is False or attempt == 2:
+                print(f"请求失败{error}")
                 return None
 
-            await asyncio.sleep(2 ** attempt)
-
-        except httpx.HTTPStatusError as error:
-            if error.response.status_code != 429:
-                print(f"API 请求失败：{error.response.status_code}")
-                print(error.response.text)
-                return None
-
-            if error.response.status_code == 429 and attempt == 2:
-                print(f"请求最终失败：{error}")
-                return None
-
+            print("请求失败，正在重试")
             await asyncio.sleep(2 ** attempt)
 
         except ValueError as error:

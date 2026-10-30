@@ -3,6 +3,7 @@ from agent_runner import run_agent
 from session_store import clear_session
 from agent_events import listeners
 from session_store import get_session_path
+from tool_policies import read_only_guard
 
 async def show_tool_event(event):
     if event["type"] == "tool_start":
@@ -32,10 +33,22 @@ async def show_model_event(event):
             print("输出：",event["usage"]["completion_tokens"])
             print("合计：",event["usage"]["total_tokens"])
 
-async def run_cli_task(prompt, session_id): #启动助手
-    try:
-        await run_agent(prompt, session_id=session_id)
+async def run_cli_task(prompt, session_id, read_only, steering_queue): #启动助手
+    before_tool = None
+    if read_only:
+        before_tool = read_only_guard
 
+    try:
+        agent_result = await run_agent(
+            prompt,
+            session_id=session_id,
+            before_tool=before_tool,
+            steering_queue=steering_queue,
+        )
+
+        if agent_result["completed"] == False:
+            print(agent_result["reason"])
+ 
     except Exception as error:
         print(f"请求错误{error}")
 
@@ -61,10 +74,14 @@ async def main():
     agent_task = None
     current_session_id = "default" #默认会话
 
+    read_only = False #只读开关
+    steering_queue = None
+
     while True:
         user_prompt = (await asyncio.to_thread( #让输入不阻塞请求
             input, f"[{current_session_id}]请输入任务："
             )).strip() 
+        
         command, separator, argument = user_prompt.partition(" ") #按空格拆分
 
         if user_prompt == "/reset": #清除对话
@@ -100,11 +117,47 @@ async def main():
             elif stopped is False:
                 print("当前没有运行请求")
             agent_task = None
-        
+
+        elif command == "/mode": #切换权限
+            if not argument:
+                if read_only:
+                    print("当前为只读模式")
+                else:
+                    print("当前为标准模式")
+                
+            else:
+                argument = argument.strip()
+
+                if argument == "readonly":
+                    print("已切换为只读模式")
+                    read_only = True
+
+                elif argument == "normal":
+                    print("已切换为标准模式")
+                    read_only = False
+
+                else:
+                    print("仅支持只读/mode readonly和标准/mode normal")
+
+        elif command == "/steer": #插入会话
+            if not argument:
+                print("请输入补充任务")
+
+            else:
+                argument = argument.strip()
+
+                if agent_task is None or agent_task.done() == True:
+                    print("当前没有任务运行")
+
+                else:
+                    steering_queue.put_nowait(argument)
+                    print("补充指令已排队")
+
         else:
             if agent_task is None or agent_task.done() == True:
+                steering_queue = asyncio.Queue()
                 agent_task = asyncio.create_task(
-                    run_cli_task(user_prompt, current_session_id)
+                    run_cli_task(user_prompt, current_session_id, read_only, steering_queue)
                 )
             else:
                 print("请先/stop停止当前任务")

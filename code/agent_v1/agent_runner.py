@@ -9,7 +9,8 @@ from tool_registry import tool_arg_models, tool_functions, tool_specs, serial_to
 from tools import workspace_root
 from agent_events import emit
 from session_store import save_session, load_session
-from model_client import stream_message, summarize_messages, MAX_OUTPUT_TOKENS
+from model_client import stream_message, summarize_messages
+from model_config import AGENT_MODEL_CONFIG
 
 SYSTEM_PROMPT = "请始终用中文回答用户。工具调用参数必须使用合法 JSON。"
 AGENTS_PATH = Path(workspace_root) / "AGENTS.md"
@@ -24,7 +25,7 @@ SKILLS_PROMPT = """
 CONTEXT_BUDGET = 200000
 TOKEN_MARGIN = 10000
 
-INPUT_TOKEN_BUDGET = CONTEXT_BUDGET - MAX_OUTPUT_TOKENS - TOKEN_MARGIN
+INPUT_TOKEN_BUDGET = CONTEXT_BUDGET - AGENT_MODEL_CONFIG.max_output_tokens - TOKEN_MARGIN
 
 #加载AGENTS.md和skills
 def build_system_prompt():
@@ -150,6 +151,7 @@ def process_tool_call(
         function_data,
         tool_results,
         valid_tools,
+        before_tool = None,
 ):
     tool_name = function_data.get("name")
     raw_arguments = function_data.get("arguments")
@@ -162,6 +164,7 @@ def process_tool_call(
 
     try:
         arguments = json.loads(raw_arguments)
+
     except json.JSONDecodeError:
         tool_results[index] = make_tool_result(
                 tool_call_id,
@@ -180,6 +183,7 @@ def process_tool_call(
 
     try:
         validated_args = argument_model.model_validate(arguments)
+
     except ValidationError as error:
         tool_results[index] = make_tool_result(
                 tool_call_id,
@@ -187,15 +191,34 @@ def process_tool_call(
         )
         return
 
-    valid_tools.append(
-        (
-            index,
+    try:
+        reason = None
+        if before_tool is not None:
+            reason = before_tool(tool_name, validated_args)
+
+        if reason is None: #在规定权限内
+            valid_tools.append(
+                (
+                    index,
+                    tool_call_id,
+                    tool_function,
+                    validated_args
+                )
+            )
+            return
+
+        tool_results[index] = make_tool_result(
             tool_call_id,
-            tool_function,
-            validated_args
+            reason,
         )
-    )
-    return
+        return
+    
+    except Exception as error:
+        tool_results[index] = make_tool_result(
+            tool_call_id,
+            f"权限检查失败：{error}"
+        )
+        return
 
 #并行调用已校验工具
 async def execute_validated_tool(
@@ -307,12 +330,27 @@ def make_tool_result(tool_call_id: str, content: str) -> dict:
         "content": limit_tool_output(content),
     }
 
+#取出队列信息
+def drain_steering_messages(steering_queue):
+    temp_messgae = []
+    if steering_queue is None:
+        return temp_messgae
+
+    while not steering_queue.empty():
+        text = steering_queue.get_nowait() #取出最早队列
+        temp_messgae.append(
+            {"role": "user", "content": text}
+        )
+    return temp_messgae
+
 #Agent Loop结构
 async def run_agent(
         user_prompt: str,
         max_turns: int = 10,
-        session_id: str = "default"
-        ) -> dict|None:
+        session_id: str = "default",
+        before_tool = None,
+        steering_queue = None,
+        ) -> dict:
     messages, summary_cache = load_session(session_id=session_id)
 
     if not messages or messages[0].get("role") != "system": #植入agent规则
@@ -335,33 +373,52 @@ async def run_agent(
     tools = build_tools_payload()
     turn_count = 0
 
+    default_model_result = { #无响应时默认返回字典
+        "message":  None,
+        "completed": False,
+        "reason": None,
+    }
+
     async with httpx.AsyncClient(timeout=30) as client: #发送请求
-        request_messages = await prepare_request_messages( #压缩历史对话
-            client,
-            messages,
-            tools,
-            summary_cache=summary_cache,
-            max_tokens=INPUT_TOKEN_BUDGET
-        )
+        while True:
+            steering_messages = drain_steering_messages(steering_queue)
+            if steering_messages:
+                messages.extend(steering_messages)
+                save_session(messages, summary_cache, session_id=session_id)
+            
+            request_messages = await prepare_request_messages( #压缩历史对话
+                client,
+                messages,
+                tools,
+                summary_cache=summary_cache,
+                max_tokens=INPUT_TOKEN_BUDGET
+            )
         
-        save_session(messages, summary_cache, session_id=session_id)
+            save_session(messages, summary_cache, session_id=session_id)
 
-        if not request_messages:
-            return
+            if not request_messages:
+                default_model_result["reason"] = "输入预算不足"
+                return default_model_result
         
-        message, completed = await stream_message(client, request_messages, tools)
+            model_result = await stream_message(client, request_messages, tools) #响应返回字典
+            message = model_result["message"]
+            completed = model_result["completed"]
 
-        while message is not None:
+            if message is None:
+                return model_result
+
             if not completed: #响应不完整
                 if not message.get("tool_calls"):
                     messages.append(message)
                     save_session(messages, summary_cache, session_id=session_id)
-                return 
+                return  model_result
 
             if not message.get("tool_calls"): #返回回答
                 messages.append(message)
                 save_session(messages, summary_cache, session_id=session_id)
-                return message
+                if steering_queue is not None and not steering_queue.empty():
+                    continue
+                return model_result
 
             tool_results = [None] * len(message["tool_calls"])
             valid_tools = []
@@ -370,8 +427,9 @@ async def run_agent(
                 for call_index, tool_call in enumerate(message["tool_calls"]):
                     tool_call_id = tool_call.get("id")
                     if not tool_call_id:
-                        print("工具调用结构不完整")
-                        return
+                        default_model_result["reason"] = "工具调用结构不完整"
+                        print(default_model_result["reason"])
+                        return default_model_result
 
                     tool_results[call_index] = make_tool_result(
                             tool_call_id,
@@ -380,7 +438,9 @@ async def run_agent(
                 messages.append(message)
                 messages.extend(tool_results)
                 save_session(messages, summary_cache, session_id=session_id)
-                return
+                
+                default_model_result["reason"] = "达到最大工具调用轮数"
+                return default_model_result
             
             turn_count += 1
 
@@ -388,8 +448,9 @@ async def run_agent(
                 tool_call_id = tool_call.get("id")
                 function_data = tool_call.get("function")
                 if not tool_call_id:
-                    print("工具调用结构不完整")
-                    return
+                    default_model_result["reason"] = "工具调用结构不完整"
+                    print(default_model_result["reason"])
+                    return default_model_result
 
                 if not isinstance(function_data, dict):
                     tool_results[index] = make_tool_result(
@@ -404,6 +465,7 @@ async def run_agent(
                     function_data,
                     tool_results,
                     valid_tools,
+                    before_tool=before_tool,
                 )
 
             executed_results = await execute_tool_batch(valid_tools) #执行工具
@@ -415,18 +477,3 @@ async def run_agent(
             messages.append(message)
             messages.extend(tool_results)
             save_session(messages, summary_cache, session_id=session_id)
-
-            request_messages = await prepare_request_messages(
-                client,
-                messages,
-                tools,
-                summary_cache=summary_cache,
-                max_tokens=INPUT_TOKEN_BUDGET
-            )
-            
-            save_session(messages, summary_cache, session_id=session_id)
-
-            if not request_messages:
-                return
-            
-            message, completed = await stream_message(client, request_messages, tools) #再次请求

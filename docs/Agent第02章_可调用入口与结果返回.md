@@ -1,5 +1,7 @@
 # 第2章应用练习：让调用者取得Agent的最终回答
 
+> 接口更新（2026-10-29）：run_agent普通返回现已统一为message、completed、reason三键字典；完整最终消息在message中，未完成时completed为False并给出reason。见[进阶第5节完成结果](Agent进阶05_运行结果与结束原因.md#9-本节完成结果)。下文保留2026-10-22首次返回消息/None的教学过程，以更新后的接口为准。
+>
 > 结果：2026-10-22。run_agent的dict | None返回约定已由学员实现并通过源码静态审阅。下一项为模型输出事件，将正文片段和usage显示接到现有监听器。
 > 对照教材：[第2章三层架构](https://www.dgzhuya.com/modules/ch02-three-layer-arch/python)。本练习由教员结合当前Python项目安排。
 

@@ -1,6 +1,6 @@
 # 进阶第4节：工具决策钩子与只读模式
 
-> 2026-10-27。模型调用模块、多会话和主动停止均已静态通过。当前增加工具执行前的决策回调，以只读策略为例。先接核心机制，再接CLI及HTTP两个入口的模式选择，源码由学员亲写，尚未实现。
+> 2026-10-29。本节已整体静态通过：只读策略、runner核心机制、CLI/HTTP模式传递以及两个输入循环的命令反馈均已完成。尚未运行本节代码，静态审阅不记为实跑；没有剩余必做项。
 
 ## 1. 钩子是什么，和监听器有什么关系
 
@@ -30,7 +30,7 @@ validated_args是Pydantic校验后的参数对象，本节策略只按名字判�
 
 tool_registry里的requires_serial只负责执行顺序。当前只读策略按工具名称明确选择允许范围，调度信息不作为权限结论。
 
-## 3. 当前动手：核心机制
+## 3. 核心机制
 
 本段只改新策略模块与agent_runner.py，完成可由Python调用方指定的回调接口。
 
@@ -73,18 +73,83 @@ flowchart TD
 
 拒绝时也必须给原tool_call_id生成结果。只return而不填写结果，会在工具响应列表中留下空项，无法正确回应模型已经提出的调用。
 
-## 4. 后半段覆盖两个入口
+## 4. 两个入口的模式选择
 
-核心机制静态正确后，继续接模式选择，两个入口都覆盖：
+核心机制、模式选择传递链及命令反馈均已静态通过，以下保留实现说明。read_only是布尔值，before_tool是函数对象或None；两者由CLI或服务端进行转换。
 
-- 直接CLI选择普通或只读模式，后台任务将选中的before_tool传给run_agent。
-- HTTP客户端发送read_only布尔字段；服务端根据字段选择read_only_guard或None，再传给run_agent。
-- 普通模式默认保持None；选择随任务参数传入，当前任务使用创建时收到的策略。
+### 4.1 两个输入循环使用相同命令
 
-当前先完成第2、3节，不要求提前猜写后半段的参数和命令。整体入口接线会在核心审阅后给完整改动范围，不遗漏CLI或HTTP。
+在cli.py与http_client.py的main中，while之前各新增read_only = False。模式由各自入口保存，每次发起任务时传入。
+
+| 命令 | 行为 |
+| --- | --- |
+| /mode | 显示当前是normal还是readonly |
+| /mode readonly | 将read_only设为True并显示切换结果 |
+| /mode normal | 将read_only设为False并显示切换结果 |
+| /mode后跟其他值 | 显示用法，保留当前选择 |
+
+沿用已有command、argument拆分，在普通任务的else分支之前新增elif command == "/mode"，先对argument做strip再判断。命令只在本地处理；处理完自然回到输入循环。模式与session_id分别保存。创建任务时传入当时的read_only布尔值，之后切换影响下一次任务。
+
+### 4.2 cli.py：把布尔值转换为检查函数
+
+导入from tool_policies import read_only_guard。run_cli_task新增第三个形参read_only=False；main创建任务时，第三个实参传入当前read_only。
+
+在run_cli_task调用run_agent之前选择：
+
+```python
+before_tool = None
+if read_only:
+    before_tool = read_only_guard
+
+await run_agent(
+    prompt,
+    session_id=session_id,
+    before_tool=before_tool,
+)
+```
+
+read_only_guard不加括号，是把函数交给runner，工具检查阶段才会实际调用它。调用链为main → run_cli_task(prompt, session_id, read_only) → run_agent(..., before_tool=before_tool)。
+
+### 4.3 http_client.py：把布尔值放进请求正文
+
+这个客户端只发送选择，保持通过HTTP调用服务端。需同步修改三处调用层：
+
+1. request_agent在现有参数末尾追加read_only: bool = False，request_body新增"read_only": read_only。
+2. run_request新增第三个形参read_only=False，调用request_agent时增加read_only=read_only。
+3. main创建run_request任务时，第三个实参传入当前read_only。
+
+请求正文示例：
+
+```python
+request_body = {
+    "prompt": prompt,
+    "session_id": session_id,
+    "read_only": read_only,
+}
+```
+
+HTTPX现有json=request_body会把Python的True/False编码为JSON的true/false。回调函数不放入JSON，客户端也不需要导入tool_policies。
+
+### 4.4 http_api.py：接收选择并交给runner
+
+服务端导入read_only_guard，完成以下调用链：
+
+1. ChatRequest新增read_only: bool = False，省略该字段的原有请求仍为普通模式。
+2. chat取出data.read_only，创建run_agent_to_queue任务时用read_only=data.read_only传入；原prompt、queue与session_id继续传递。
+3. run_agent_to_queue在现有参数末尾新增read_only: bool = False。在调用run_agent之前，使用4.2的if选择before_tool，再将before_tool=before_tool传给run_agent。
+
+HTTP链路为main → run_request → request_agent → JSON正文 → ChatRequest → chat → run_agent_to_queue → run_agent。布尔值沿链路传递，到服务端才转换为函数对象。
+
+runner已能接收任意符合约定的before_tool，不必知道具体的read_only_guard；可移除runner中未使用的该函数导入。整个选择保存在本次调用的局部参数中，不增加服务端全局模式或监听器登记。
 
 ## 5. 完成范围
 
 本节的只读模式限制Agent循环能分发哪些工具；工具函数本身仍是普通Python函数。模型返回的工具名即使存在，也必须通过本次回调检查才能进入执行列表。
 
-先静态审阅策略返回约定、回调传递、检查位置、拒绝/失败回填及允许分支；随后接两个入口模式选择。两段正确后本节完成，不增加测试脚本、故障注入或模型请求作为门槛。已有取消、调度、模型模块等章节不重复验收。
+已静态审阅策略返回约定、回调传递、检查位置、拒绝/失败回填、允许分支以及两个入口模式选择，本节完成。不增加测试脚本、故障注入或模型请求作为门槛。已有取消、调度、模型模块等章节不重复验收。
+
+2026-10-29核心审阅结果：read_only_guard的名称和三个允许项已修正，before_tool默认None的分支已补齐，run_agent到process_tool_call传参正确，拒绝及普通异常均回填原tool结果；核心部分静态通过。
+
+2026-10-29入口审阅结果：CLI创建后台任务并逐层传递read_only，助手选择检查函数；HTTP客户端正文含read_only、服务端请求模型接收该字段并通过chat和run_agent_to_queue传给runner，当前任务使用传入的局部选择。runner的未使用策略导入已移除。以上链路静态正确；run_cli_task的read_only无默认值，但现有调用均显式传入，不要求为形式增加默认值。仅剩两个输入循环的/mode无参时显示布尔值、未知参数时静默：需按4.1改为模式名称及用法提示。当前不新增其他源码修改、测试或模型请求要求。
+
+2026-10-29最终审阅：两个入口的/mode均已显示“只读模式”或“标准模式”，未知参数也显示两个有效命令，符合本节要求。“标准模式”与本讲义“普通模式”均对应normal，不要求改词。连同已通过的策略和参数链，进阶第4节整体完成，当前没有待改源码或额外必做项。教员仅静态审阅及更新文档，未代写或运行学生源码、未请求模型或推送GitHub。

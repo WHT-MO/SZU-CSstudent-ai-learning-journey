@@ -2,15 +2,16 @@
 
 从 Python 基础出发，亲手搭建一个能调用模型、执行文件工具、保存会话的 Agent。当前按 [Pi 教程](https://www.dgzhuya.com/modules/ch01-overview) 的思路学习，用 Python 实现并理解循环、工具、消息、事件和上下文管理。
 
-**当前主线：Agent 进阶 · 工具决策钩子与只读模式。** Python 基础课程与算法题记录见 [历史归档](docs/Python学习阶段归档.md)。
+**当前主线：Agent 进阶 · 运行中追加指令。** 已覆盖与后续方向见[Agent后续学习地图](docs/Agent后续学习地图.md)。Python基础与算法题记录见[历史归档](docs/Python学习阶段归档.md)。
 
-## 当前进度 · 2026-10-27
+## 当前进度 · 2026-10-30
 
 | 部分 | 当前实现 |
 | --- | --- |
 | 模型与循环 | DeepSeek API、异步请求、流式正文与工具调用解析、工具轮数限制、连续用户输入 |
 | 模块边界（进阶） | 模型请求、解析与摘要在model_client中，runner保留上下文、工具和循环，输出额度来源统一；已静态通过 |
-| 执行策略（进阶） | 正在实现工具执行前允许或拒绝的回调，先接核心机制，再接两个入口的只读模式选择 |
+| 运行结果（进阶） | 模型与Agent均返回message/completed/reason，模型失败、预算及轮数停止等原因可由CLI/HTTP显示；已整体静态通过 |
+| 执行策略（进阶） | 执行前允许/拒绝回调、只读策略、CLI/HTTP模式选择及命令反馈均已静态通过 |
 | 工具执行 | 参数校验、路径约束、普通错误隔离、等待超时与取消传播 |
 | 批次调度 | 含写入、编辑或脚本运行时整批顺序执行；其余只读工具并发执行，按输入顺序返回结果 |
 | 执行通知 | 工具开始与结束事件、四种结束状态、逐监听器异常隔离 |
@@ -18,12 +19,19 @@
 | 会话与摘要 | 原始历史及摘要缓存保存/恢复、当前轮原文保留、覆盖位置、请求视图与摘要增量更新 |
 | 多会话（进阶） | 独立会话存档、Agent传递、CLI及HTTP客户端选择、服务端接收均已静态通过 |
 | 请求控制（进阶） | HTTP客户端与直接CLI的异步输入、单后台Task、/stop及退出清理均已静态通过；CLI /reset受空闲判断保护 |
+| 运行中交互（进阶） | 核心、直接CLI、HTTP服务端及客户端均已静态通过；任务检查点读取补充指令 |
 | 预算与完整性 | messages 与 tools 一起粗估 token、输入与输出额度分配、单次 usage 显示、流式及非流式结束原因检查 |
 | 本机HTTP入口 | FastAPI POST /chat、共享会话锁；SSE及Python客户端文字、工具进度显示均已有运行截图 |
 
-**本次停点：** 模型调用模块迁移已整体静态通过；当前开始执行前决策回调与只读策略，尚未实现。多会话及两个入口主动停止保持完成，具体记录见[当前状态](memory/02_当前状态.md)。
+**本次停点：** 进阶前八节均已静态通过。[模型请求的重试边界](docs/Agent进阶08_模型请求的重试边界.md)已完成错误分类、摘要与流式有限重试；当前进入[MCP工具服务](docs/Agent进阶09_MCP工具服务.md)。
 
-**当前动手：** [工具决策钩子与只读模式](docs/Agent进阶04_工具决策钩子与只读模式.md)。由学员定义read_only_guard，并让run_agent将before_tool交给工具调用检查；拒绝或检查失败时生成tool结果，原调用不进入执行列表。
+**本节结果：** HTTP客户端已将/steer命令接到request_steer，依据accepted/reason显示结果并处理HTTP异常，用active_session_id固定当前任务所属会话。每条补充成功入队都会显示一次“已排队”，允许再次补充；Agent在循环检查点读取。本节没有剩余必做代码项，后续方向见[学习地图](docs/Agent后续学习地图.md)。
+
+**当前动手：** 按官方MCP Python SDK 2.x安装依赖，编写demo_mcp_server.py，用MCPServer注册get_python_version并通过stdio提供工具。服务端、客户端及Agent接入分段实施，当前服务脚本尚未编写。
+
+**当前返回约定：** run_agent普通返回包含message、completed、reason的字典；completed为True表示取得完整最终回答，其他普通退出为False并提供原因。HTTP的agent_done.result透传该字典，CLI与HTTP客户端显示未完成原因。源码由学员亲写，本节结论依据静态审阅。
+
+**本节用法：** CLI与HTTP客户端均支持/mode查看、/mode readonly切换只读、/mode normal恢复普通。只读模式允许读取、列目录和搜索，拒绝写入、编辑及运行脚本；选择影响之后提交的任务。实现由学员亲写，本节结论依据静态审阅。
 
 **已完成：** [主动停止当前任务](docs/Agent进阶02_主动停止当前请求.md#11-本节完成结果)。请求在后台运行，/stop取消并等待当前Task收尾，输入循环继续接收命令；两个入口都保留单活跃任务。
 
@@ -102,6 +110,7 @@ DEEPSEEK_API_KEY=替换为自己的密钥
 | [http_client.py](code/agent_v1/http_client.py) | 输入任务、读取本机SSE、显示文字及取得最终消息 |
 | [agent_runner.py](code/agent_v1/agent_runner.py) | 上下文准备、Agent Loop、工具调度与会话管理，调用模型模块 |
 | [model_client.py](code/agent_v1/model_client.py) | 模型HTTP请求、流式与非流式解析、摘要生成及模型输出事件 |
+| [model_config.py](code/agent_v1/model_config.py) | 主任务与摘要分别使用的模型名、输出上限及推理强度 |
 | [session_store.py](code/agent_v1/session_store.py) | 会话历史与摘要状态的保存、加载及清除 |
 | [tool_schemas.py](code/agent_v1/tool_schemas.py) | AgentTool结构及工具参数模型 |
 | [tool_registry.py](code/agent_v1/tool_registry.py) | 集中登记工具资料，生成参数类、函数、模型说明及顺序策略 |

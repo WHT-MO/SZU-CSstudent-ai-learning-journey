@@ -1,5 +1,7 @@
 # 应用阶段：给现有Agent增加本机HTTP入口
 
+> 接口更新（2026-10-29）：当前POST /chat已演进为[HTTP事件流](Agent实战篇_HTTP事件流.md)，返回SSE；agent_done.result包含message、completed、reason三键任务结果，具体原因由客户端显示。见[进阶第5节](Agent进阶05_运行结果与结束原因.md#9-本节完成结果)。下文单次最终JSON及消息/None约定保留为最初实现的历史记录。
+>
 > 当前进展：2026-10-22。请求链路及共享锁已静态通过；学员提供/docs的Response body截图，实际收到role为assistant、content含自我介绍的JSON，首次HTTP调用成功。下一项见[HTTP事件流](Agent实战篇_HTTP事件流.md)。
 > 对照教材：[实战篇第7章：把Agent封装成服务](https://www.dgzhuya.com/modules/pr07-deploy)。本项目用FastAPI连接已有Python运行时，教材SDK示例用于职责对照。
 

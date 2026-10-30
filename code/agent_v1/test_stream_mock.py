@@ -25,12 +25,14 @@ async def abc():
     transport = httpx.MockTransport(fake_server_tool_compele)
 
     async with httpx.AsyncClient(transport=transport) as client:
-        message, completed = await stream_message(
+        model_result = await stream_message(
             client,
             messages=[],
             tools=[],
         )
-
+        message = model_result["message"]
+        completed = model_result["completed"]
+        
         assert message is None
         assert completed is False
 
