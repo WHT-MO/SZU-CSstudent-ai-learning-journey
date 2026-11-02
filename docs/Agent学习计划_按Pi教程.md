@@ -222,6 +222,20 @@
 
 - 2026-10-30重试边界已整体静态通过：候选错误分类、摘要三次尝试、流式逐次缓冲及发正文后终止、错误原因和取消传播已接齐，遗漏引号已修正。当前进入[MCP工具服务](Agent进阶09_MCP工具服务.md)，基于工具注册、异步与子进程基础学习独立工具提供方；第一步按官方SDK 2.x使用MCPServer编写返回Python版本的stdio服务，客户端和Agent接入随后处理。
 
+- 2026-10-30MCP独立通信已实际成功：学员截图显示工具名/说明/空入参schema、is_error=False及Python3.12.10。当前进入[MCP工具接入Agent](Agent进阶10_MCP工具接入Agent.md)，先用普通转换函数把SDK工具目录变成现有AgentTool列表，并在demo中显示；执行、校验与Client生命周期随后接，不把说明转换当完整接入。
+- 2026-11-02工具说明转换及demo使用已静态通过；当前新增异步call_mcp_tool，复用Client调用，提取并返回文字，is_error转换为包含原因的RuntimeError以供执行器处理。Agent执行与连接接线仍未完成，不新增测试或模型请求门槛。
+- 2026-11-02调用封装的文字收集和循环外返回已修正，call_mcp_tool及demo使用静态通过。当前让execute_validated_tool用inspect.iscoroutinefunction选择异步直接调用/同步to_thread，再统一wait_for控制超时；MCP注册、校验和Client生命周期随后处理。
+- 2026-11-02执行器else已补齐，同步/异步两支及统一超时静态通过；已讲清异步函数自身协程与to_thread线程包装的区别，接下来对齐MCP三参数调用与单参数执行入口，再接注册、校验及连接生命周期。
+- 2026-11-02执行入口参数适配任务：以partial预填参数的例子补齐前置，学员写build_mcp_functions，构造工具名称到单参数调用入口的字典，demo在打开的Client内按名称调用。此时尚未进入Agent实际注册和执行。
+- 2026-11-02学员对partial与字典仍不理解，代码尚未变动。当前先解释实际三参数调用与单参数执行器的差异，将动作缩为demo中预填单个version_tool并await调用；批量映射保留为随后步骤，不按已展示例子推定掌握。
+- 2026-11-02单个partial入口已创建并await调用，静态通过。恢复build_mcp_functions任务，用名称到入口字典连接工具发现与按名执行；demo先取出tool_function再await调用，不用紧凑写法或新增验证。
+- 2026-11-02批量入口的重复说明转换已删除，build_mcp_functions及demo按名调用静态通过。当前让build_tools_payload显式接收available_tools，并由run_agent传入现有tool_specs，为执行接齐后的本地/MCP目录共用构造路径作准备。
+- 2026-11-02说明构造显式入参及caller静态通过。当前将MCP执行映射由run_agent传入process_tool_call，按名称分流MCP参数字典与本地Pydantic模型，继续共用权限检查；工具目录合并及连接随后接。
+- 2026-11-02参数共用解析与MCP/本地分流静态通过；当前一次接齐run_agent本次目录、串行集合传入批次执行器和demo在打开Client内await Agent。静态通过后由学员运行既有demo核实新的模型工具选择与执行回填，不新增独立测试。
+- 2026-11-02目录归一化/逐项检查/调度传参三处已修正，MCP Agent接线整体静态通过。当前学员运行既有demo一次；对应session_mcp_demo.json尚不存在，实际调用成功需结合输出和保存的tool调用/结果确认。
+- 2026-11-03模型经Agent调用MCP实际成功：终端截图与session_mcp_demo.json共5条消息一致，模型get_python_version调用及对应tool结果编号匹配，返回Python3.12.10后生成最终回答。第10节完成，没有待修代码、待运行或额外局部验收。
+- 2026-11-03下一主题选择[代码审阅工作流](Agent进阶11_代码审阅工作流.md)。原模型适配/知识检索为候选方向，现依据已有审阅场景先学习结构化产物、程序可核实的证据及阶段控制；随后用多文档问答学RAG。当前只由学员新建review_workflow.py，定义ReviewFinding与ReviewResult；不改run_agent结果契约，不增加测试或模型请求。
+
 ## 4. 持续保留的工程要求
 
 - 文件工具限制在 `code/agent_v1/workspace/` 内，文件修改操作说明匹配条件与副作用。
@@ -242,4 +256,4 @@
 
 ## 6. 下一步
 
-2026-10-30停点：进阶前八节整体静态通过。当前第9节MCP外部工具，学员先安装mcp>=2,<3，新增demo_mcp_server.py，用from mcp.server import MCPServer、工具装饰器及stdio启动提供get_python_version。已核对官方当前SDK 2.x接口，环境尚无mcp；客户端、发现调用和Agent注册随后接。教员只维护讲义和进度，未代改或运行源码，没有新增测试、模型请求或Git上传。
+2026-11-03停点：前八节静态通过，第9/10节MCP已实际成功。当前进入第11节代码审阅工作流，先由学员在review_workflow.py定义单条候选问题ReviewFinding（line/description/trigger/impact/evidence）和ReviewResult（findings:list[ReviewFinding]），与run_agent运行状态返回分开；尚未实现或运行工作流。后续接结构化输出、证据检查及报告，再展开RAG。教员未代改或运行源码、测试、模型请求，也未Git上传新练习。

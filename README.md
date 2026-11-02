@@ -2,9 +2,9 @@
 
 从 Python 基础出发，亲手搭建一个能调用模型、执行文件工具、保存会话的 Agent。当前按 [Pi 教程](https://www.dgzhuya.com/modules/ch01-overview) 的思路学习，用 Python 实现并理解循环、工具、消息、事件和上下文管理。
 
-**当前主线：Agent 进阶 · 运行中追加指令。** 已覆盖与后续方向见[Agent后续学习地图](docs/Agent后续学习地图.md)。Python基础与算法题记录见[历史归档](docs/Python学习阶段归档.md)。
+**当前主线：Agent 进阶 · 代码审阅工作流。** 已覆盖与后续方向见[Agent后续学习地图](docs/Agent后续学习地图.md)。Python基础与算法题记录见[历史归档](docs/Python学习阶段归档.md)。
 
-## 当前进度 · 2026-10-30
+## 当前进度 · 2026-11-03
 
 | 部分 | 当前实现 |
 | --- | --- |
@@ -13,21 +13,24 @@
 | 运行结果（进阶） | 模型与Agent均返回message/completed/reason，模型失败、预算及轮数停止等原因可由CLI/HTTP显示；已整体静态通过 |
 | 执行策略（进阶） | 执行前允许/拒绝回调、只读策略、CLI/HTTP模式选择及命令反馈均已静态通过 |
 | 工具执行 | 参数校验、路径约束、普通错误隔离、等待超时与取消传播 |
-| 批次调度 | 含写入、编辑或脚本运行时整批顺序执行；其余只读工具并发执行，按输入顺序返回结果 |
+| 批次调度 | 含本地写入、编辑、脚本运行或MCP入口时整批顺序执行；其余本地只读工具并发，按输入顺序返回结果；MCP接线已静态通过 |
 | 执行通知 | 工具开始与结束事件、四种结束状态、逐监听器异常隔离 |
 | 读取与搜索 | 按行范围读取、带行号的单文件搜索、单条工具结果默认 50 KiB 体积保护 |
 | 会话与摘要 | 原始历史及摘要缓存保存/恢复、当前轮原文保留、覆盖位置、请求视图与摘要增量更新 |
 | 多会话（进阶） | 独立会话存档、Agent传递、CLI及HTTP客户端选择、服务端接收均已静态通过 |
 | 请求控制（进阶） | HTTP客户端与直接CLI的异步输入、单后台Task、/stop及退出清理均已静态通过；CLI /reset受空闲判断保护 |
 | 运行中交互（进阶） | 核心、直接CLI、HTTP服务端及客户端均已静态通过；任务检查点读取补充指令 |
+| MCP外部工具（进阶） | 本地stdio工具经模型选择、Agent执行、结果回填已实际成功；当前接返回文字的工具，入口为demo |
 | 预算与完整性 | messages 与 tools 一起粗估 token、输入与输出额度分配、单次 usage 显示、流式及非流式结束原因检查 |
 | 本机HTTP入口 | FastAPI POST /chat、共享会话锁；SSE及Python客户端文字、工具进度显示均已有运行截图 |
 
-**本次停点：** 进阶前八节均已静态通过。[模型请求的重试边界](docs/Agent进阶08_模型请求的重试边界.md)已完成错误分类、摘要与流式有限重试；当前进入[MCP工具服务](docs/Agent进阶09_MCP工具服务.md)。
+**本次停点：** 进阶前八节已静态通过，[MCP工具服务](docs/Agent进阶09_MCP工具服务.md#9-实际运行结果与完成范围)与[MCP工具接入Agent](docs/Agent进阶10_MCP工具接入Agent.md#13-实际运行结果本节完成2026-11-03)均已实际成功，第10节完成。
 
-**本节结果：** HTTP客户端已将/steer命令接到request_steer，依据accepted/reason显示结果并处理HTTP异常，用active_session_id固定当前任务所属会话。每条补充成功入队都会显示一次“已排队”，允许再次补充；Agent在循环检查点读取。本节没有剩余必做代码项，后续方向见[学习地图](docs/Agent后续学习地图.md)。
+**运行中交互结果：** HTTP客户端已将/steer命令接到request_steer，依据accepted/reason显示结果并处理HTTP异常，用active_session_id固定当前任务所属会话。每条补充成功入队都会显示一次“已排队”，允许再次补充；Agent在循环检查点读取。本节没有剩余必做代码项，后续方向见[学习地图](docs/Agent后续学习地图.md)。
 
-**当前动手：** 按官方MCP Python SDK 2.x安装依赖，编写demo_mcp_server.py，用MCPServer注册get_python_version并通过stdio提供工具。服务端、客户端及Agent接入分段实施，当前服务脚本尚未编写。
+**MCP本节结果：** 终端截图与mcp_demo会话记录已交叉核实：模型调用get_python_version，匹配编号的tool结果返回Python3.12.10，随后生成最终回答。本节没有待改源码或额外验收；后续方向见学习地图。
+
+**当前动手：** 第11节[代码审阅工作流](docs/Agent进阶11_代码审阅工作流.md)先定义结构化候选问题与结果列表，再接证据检查和报告。当前由学员新建review_workflow.py，定义ReviewFinding和ReviewResult，工作流尚未实现。
 
 **当前返回约定：** run_agent普通返回包含message、completed、reason的字典；completed为True表示取得完整最终回答，其他普通退出为False并提供原因。HTTP的agent_done.result透传该字典，CLI与HTTP客户端显示未完成原因。源码由学员亲写，本节结论依据静态审阅。
 
@@ -101,6 +104,17 @@ DEEPSEEK_API_KEY=替换为自己的密钥
 
 输入任务后，客户端在后台处理一个请求，同时接收输入。输入/session study选择下一次请求的会话，/session查看当前选择，/stop取消并等待当前客户端请求收尾，/exit先清理请求再退出；忙碌时提示先停止当前请求再启动新任务。text_delta发送文字片段，agent_done.result保存最终消息（未取得时为null），普通未处理异常通过agent_error.message发送。服务端按请求的session_id选择历史，省略时使用default；客户端发送所选会话名。服务端完整任务由进程内共享锁顺序处理，使用单worker运行。普通JSON入口、SSE及Python客户端文件任务均已有学员成功运行截图，多会话及主动停止流程依据静态审阅。
 
+### MCP工具接入演示
+
+按上方说明安装基础依赖并配置模型密钥后，额外安装MCP Python SDK 2.x，在仓库根目录运行：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install "mcp>=2,<3"
+.\.venv\Scripts\python.exe code\agent_v1\demo_mcp_client.py
+```
+
+客户端会启动本地stdio工具服务，在连接保持打开时运行Agent。本演示会请求已配置的模型，由模型选择get_python_version，Agent经MCP执行并回填结果，再显示最终回答；无需另开服务终端。实际成功记录见[第10节](docs/Agent进阶10_MCP工具接入Agent.md#13-实际运行结果本节完成2026-11-03)。
+
 ## 项目入口
 
 | 文件 | 职责 |
@@ -111,6 +125,9 @@ DEEPSEEK_API_KEY=替换为自己的密钥
 | [agent_runner.py](code/agent_v1/agent_runner.py) | 上下文准备、Agent Loop、工具调度与会话管理，调用模型模块 |
 | [model_client.py](code/agent_v1/model_client.py) | 模型HTTP请求、流式与非流式解析、摘要生成及模型输出事件 |
 | [model_config.py](code/agent_v1/model_config.py) | 主任务与摘要分别使用的模型名、输出上限及推理强度 |
+| [demo_mcp_server.py](code/agent_v1/demo_mcp_server.py) | MCP 2.x的stdio工具服务，提供get_python_version，已被Agent实际调用 |
+| [demo_mcp_client.py](code/agent_v1/demo_mcp_client.py) | 启动MCP子进程、发现工具，并在连接内运行Agent完成工具调用 |
+| [mcp_adapter.py](code/agent_v1/mcp_adapter.py) | 转换工具说明、预填执行入口参数、转换MCP文字结果与错误 |
 | [session_store.py](code/agent_v1/session_store.py) | 会话历史与摘要状态的保存、加载及清除 |
 | [tool_schemas.py](code/agent_v1/tool_schemas.py) | AgentTool结构及工具参数模型 |
 | [tool_registry.py](code/agent_v1/tool_registry.py) | 集中登记工具资料，生成参数类、函数、模型说明及顺序策略 |

@@ -87,7 +87,9 @@ tool_arg_models = {
 - 后续方向见[学习地图](Agent后续学习地图.md)。[运行中追加指令](Agent进阶06_运行中追加指令.md)的核心、直接CLI、HTTP服务端及客户端均已静态通过：每条文字经/steer进入当前任务的Queue并独立确认，runner在检查点消费为user消息，先保存再准备请求。原/chat事件队列与补充队列承担不同方向的数据传递，本节没有剩余必做代码项。
 - [按用途配置模型](Agent进阶07_按用途配置模型.md)已整体静态通过：model_config定义两个用途的模型名、输出上限和reasoning_effort，model_client三个请求体按用途读取，runner直接读取主任务输出上限计算预算；旧常量引用与模型名拼写已修正。
 - [模型请求的重试边界](Agent进阶08_模型请求的重试边界.md)已整体静态通过：错误分类、摘要三次尝试、流式独立缓冲及发正文后停止重试、终止原因与取消传播已接齐，引号已修正。未将静态实现记为运行结果。
-- 当前学习[MCP工具服务](Agent进阶09_MCP工具服务.md)：先以官方Python SDK 2.x的MCPServer编写独立stdio服务，客户端再发现和调用工具，随后接现有Agent。当前源码尚未实现MCP服务或客户端，不将本地注册表与MCP接入混为一项。
+- [MCP工具服务](Agent进阶09_MCP工具服务.md)的独立stdio服务与客户端发现/调用已有实际成功截图，返回Python3.12.10；MCP2.3.0客户端内容块读取已正确。工具尚未接入Agent。
+- [MCP工具接入Agent](Agent进阶10_MCP工具接入Agent.md)已于2026-11-03实际成功：mcp_demo保存模型get_python_version调用、同编号tool结果Python3.12.10及最终回答，与终端截图一致。MCP入口按本次串行集合调度，Client覆盖整个Agent调用期；验证入口为demo，CLI/HTTP本节未新增MCP连接配置。
+- 当前进入[代码审阅工作流](Agent进阶11_代码审阅工作流.md)：先由学员定义业务结果ReviewFinding/ReviewResult，随后在已有run_agent之外组织审阅、证据检查和报告。现有message/completed/reason运行结果契约继续沿用；新工作流尚未实现或运行。
 
 ## 本节对照：三个函数
 

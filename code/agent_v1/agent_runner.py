@@ -1,6 +1,7 @@
 import asyncio
 import json
 import httpx
+import inspect
 
 from pathlib import Path
 from pydantic import ValidationError
@@ -131,7 +132,7 @@ async def prepare_request_messages(client, messages, tools, summary_cache, max_t
     return request_messages
 
 #模型读取工具
-def build_tools_payload() -> list[dict]:
+def build_tools_payload(available_tools) -> list[dict]:
     return [
         {
             "type": "function",
@@ -141,7 +142,7 @@ def build_tools_payload() -> list[dict]:
                 "parameters": tool.parameters,
             },
         }
-        for tool in tool_specs
+        for tool in available_tools
     ]
 
 #工具收集检查
@@ -151,14 +152,16 @@ def process_tool_call(
         function_data,
         tool_results,
         valid_tools,
+        mcp_functions,
         before_tool = None,
 ):
     tool_name = function_data.get("name")
     raw_arguments = function_data.get("arguments")
+
     if not tool_name or raw_arguments is None:
         tool_results[index] = make_tool_result(
-                tool_call_id,
-                "工具调用缺少名称或参数",
+            tool_call_id,
+            "工具调用缺少名称或参数",
         )
         return
 
@@ -167,29 +170,40 @@ def process_tool_call(
 
     except json.JSONDecodeError:
         tool_results[index] = make_tool_result(
-                tool_call_id,
-                "工具参数不是合法 JSON",
+            tool_call_id,
+            "工具参数不是合法 JSON",
         )
         return
+    
+    if tool_name in mcp_functions:
+        tool_function = mcp_functions.get(tool_name)
+        if not isinstance(arguments, dict):
+            tool_results[index] = make_tool_result(
+                tool_call_id,
+                "MCP工具参数校验失败",
+            )
+            return
+        validated_args = arguments
 
-    argument_model = tool_arg_models.get(tool_name)
-    tool_function = tool_functions.get(tool_name)
-    if argument_model is None or tool_function is None:
-        tool_results[index] = make_tool_result(
+    else:
+        argument_model = tool_arg_models.get(tool_name)
+        tool_function = tool_functions.get(tool_name)
+        if argument_model is None or tool_function is None:
+            tool_results[index] = make_tool_result(
                 tool_call_id,
                 f"未知工具：{tool_name}",
-        )
-        return
+            )
+            return
 
-    try:
-        validated_args = argument_model.model_validate(arguments)
+        try:
+            validated_args = argument_model.model_validate(arguments)
 
-    except ValidationError as error:
-        tool_results[index] = make_tool_result(
+        except ValidationError as error:
+            tool_results[index] = make_tool_result(
                 tool_call_id,
                 f"工具参数校验失败：{error}",
-        )
-        return
+            )
+            return
 
     try:
         reason = None
@@ -232,13 +246,15 @@ async def execute_validated_tool(
     })
     
     try: #文件校验
-        tool_content = await asyncio.wait_for(
-            asyncio.to_thread(
-            tool_function,
-            validated_args,
-            ),
-        timeout=10,
-        )
+        if inspect.iscoroutinefunction(tool_function) == True: #异步函数支持(MCP)
+            tool_coroutine = tool_function(validated_args)
+        else:    
+            tool_coroutine = asyncio.to_thread(
+                tool_function,
+                validated_args,
+                )
+
+        tool_content = await asyncio.wait_for(tool_coroutine, timeout=10) #协程汇合
         status = "success"
 
     except asyncio.CancelledError:
@@ -283,10 +299,10 @@ async def execute_validated_tool(
     )
 
 #批次执行工具
-async def execute_tool_batch(valid_tools):
+async def execute_tool_batch(valid_tools, serial_functions):
     has_write = False #判断是否有文件修改
     for item in valid_tools:
-        if item[2] in serial_tool_functions:
+        if item[2] in serial_functions:
             has_write = True
 
     if has_write == True: #处理工具调度
@@ -350,6 +366,8 @@ async def run_agent(
         session_id: str = "default",
         before_tool = None,
         steering_queue = None,
+        mcp_functions = None,
+        mcp_tools = None,
         ) -> dict:
     messages, summary_cache = load_session(session_id=session_id)
 
@@ -363,6 +381,16 @@ async def run_agent(
             "next_message_index": 1,
             }
 
+    if mcp_functions is None: #没有MCP接入
+        mcp_functions = {}
+    if mcp_tools is None:
+        mcp_tools = []
+    for tool in mcp_tools:
+        if tool.name in tool_functions:
+            raise ValueError(f"{tool.name}MCP工具名与本地重复")
+        if tool.name not in mcp_functions:
+            raise ValueError(f"{tool.name}MCP工具来源不明")
+
     messages[0]["content"] = build_system_prompt()
     messages.append({
         "role": "user",
@@ -370,7 +398,9 @@ async def run_agent(
     })
     save_session(messages, summary_cache, session_id=session_id)
 
-    tools = build_tools_payload()
+    available_tools = tool_specs + mcp_tools #工具集合
+    tools = build_tools_payload(available_tools)
+    serial_functions = serial_tool_functions + list(mcp_functions.values()) #工具判断集合
     turn_count = 0
 
     default_model_result = { #无响应时默认返回字典
@@ -465,10 +495,11 @@ async def run_agent(
                     function_data,
                     tool_results,
                     valid_tools,
+                    mcp_functions=mcp_functions,
                     before_tool=before_tool,
                 )
 
-            executed_results = await execute_tool_batch(valid_tools) #执行工具
+            executed_results = await execute_tool_batch(valid_tools, serial_functions) #执行工具
 
             for item, result in zip(valid_tools, executed_results):
                 index = item[0]
