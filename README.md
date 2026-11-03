@@ -2,9 +2,9 @@
 
 从 Python 基础出发，亲手搭建一个能调用模型、执行文件工具、保存会话的 Agent。当前按 [Pi 教程](https://www.dgzhuya.com/modules/ch01-overview) 的思路学习，用 Python 实现并理解循环、工具、消息、事件和上下文管理。
 
-**当前主线：Agent 进阶 · 代码审阅工作流。** 已覆盖与后续方向见[Agent后续学习地图](docs/Agent后续学习地图.md)。Python基础与算法题记录见[历史归档](docs/Python学习阶段归档.md)。
+**当前主线：Agent 进阶 · RAG与多文档问答。** 代码审阅工作流已实际跑通，后续从相关资料检索与带出处回答继续。已覆盖与后续方向见[Agent后续学习地图](docs/Agent后续学习地图.md)。Python基础与算法题记录见[历史归档](docs/Python学习阶段归档.md)。
 
-## 当前进度 · 2026-11-03
+## 当前进度 · 2026-11-04
 
 | 部分 | 当前实现 |
 | --- | --- |
@@ -23,14 +23,15 @@
 | MCP外部工具（进阶） | 本地stdio工具经模型选择、Agent执行、结果回填已实际成功；当前接返回文字的工具，入口为demo |
 | 预算与完整性 | messages 与 tools 一起粗估 token、输入与输出额度分配、单次 usage 显示、流式及非流式结束原因检查 |
 | 本机HTTP入口 | FastAPI POST /chat、共享会话锁；SSE及Python客户端文字、工具进度显示均已有运行截图 |
+| 代码审阅工作流 | JSON业务结果、源码证据检查、Python排版及保存已接齐；零问题路径实际成功，写入请求被只读策略拒绝已有会话证据 |
 
-**本次停点：** 进阶前八节已静态通过，[MCP工具服务](docs/Agent进阶09_MCP工具服务.md#9-实际运行结果与完成范围)与[MCP工具接入Agent](docs/Agent进阶10_MCP工具接入Agent.md#13-实际运行结果本节完成2026-11-03)均已实际成功，第10节完成。
+**本次停点：** 进阶前八节已静态通过，第9/10节MCP及第11节[代码审阅工作流](docs/Agent进阶11_代码审阅工作流.md#9-实际运行结果本节完成)已有实际成功证据。11月3日23:57生成零问题报告，与会话最终JSON一致；逐条证据失败等其他分支不据此宣称已经实跑。
 
 **运行中交互结果：** HTTP客户端已将/steer命令接到request_steer，依据accepted/reason显示结果并处理HTTP异常，用active_session_id固定当前任务所属会话。每条补充成功入队都会显示一次“已排队”，允许再次补充；Agent在循环检查点读取。本节没有剩余必做代码项，后续方向见[学习地图](docs/Agent后续学习地图.md)。
 
 **MCP本节结果：** 终端截图与mcp_demo会话记录已交叉核实：模型调用get_python_version，匹配编号的tool结果返回Python3.12.10，随后生成最终回答。本节没有待改源码或额外验收；后续方向见学习地图。
 
-**当前动手：** 第11节[代码审阅工作流](docs/Agent进阶11_代码审阅工作流.md)先定义结构化候选问题与结果列表，再接证据检查和报告。当前由学员新建review_workflow.py，定义ReviewFinding和ReviewResult，工作流尚未实现。
+**当前动手：** 第12节[RAG与多文档问答](docs/Agent进阶12_RAG与多文档问答.md)。已准备[会话资料](docs/rag_demo/sessions.md)和[工具资料](docs/rag_demo/tools.md)，当前由学员新建rag_demo.py，先编写load_knowledge_documents读取多份资料为path/content字典列表；随后实现相关片段选择与带出处回答，尚未运行RAG应用。
 
 **当前返回约定：** run_agent普通返回包含message、completed、reason的字典；completed为True表示取得完整最终回答，其他普通退出为False并提供原因。HTTP的agent_done.result透传该字典，CLI与HTTP客户端显示未完成原因。源码由学员亲写，本节结论依据静态审阅。
 
@@ -128,6 +129,7 @@ DEEPSEEK_API_KEY=替换为自己的密钥
 | [demo_mcp_server.py](code/agent_v1/demo_mcp_server.py) | MCP 2.x的stdio工具服务，提供get_python_version，已被Agent实际调用 |
 | [demo_mcp_client.py](code/agent_v1/demo_mcp_client.py) | 启动MCP子进程、发现工具，并在连接内运行Agent完成工具调用 |
 | [mcp_adapter.py](code/agent_v1/mcp_adapter.py) | 转换工具说明、预填执行入口参数、转换MCP文字结果与错误 |
+| [review_workflow.py](code/agent_v1/review_workflow.py) | 只读Agent收集JSON审阅结果、核对源码证据、生成并保存Markdown报告；零问题路径实际成功 |
 | [session_store.py](code/agent_v1/session_store.py) | 会话历史与摘要状态的保存、加载及清除 |
 | [tool_schemas.py](code/agent_v1/tool_schemas.py) | AgentTool结构及工具参数模型 |
 | [tool_registry.py](code/agent_v1/tool_registry.py) | 集中登记工具资料，生成参数类、函数、模型说明及顺序策略 |

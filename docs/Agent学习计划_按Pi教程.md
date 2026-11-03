@@ -256,4 +256,4 @@
 
 ## 6. 下一步
 
-2026-11-03停点：前八节静态通过，第9/10节MCP已实际成功。当前进入第11节代码审阅工作流，先由学员在review_workflow.py定义单条候选问题ReviewFinding（line/description/trigger/impact/evidence）和ReviewResult（findings:list[ReviewFinding]），与run_agent运行状态返回分开；尚未实现或运行工作流。后续接结构化输出、证据检查及报告，再展开RAG。教员未代改或运行源码、测试、模型请求，也未Git上传新练习。
+2026-11-04停点：前八节静态通过，第9/10节MCP已实际成功。第11节main格式异常分支已修正，11月3日23:57实际生成零问题报告，会话最终findings=[]与报告一致，模型写入请求被只读策略拒绝；本节按当前范围完成，不追加逐条证据等其他分支验收。当前进入第12节RAG与多文档问答，已准备两份固定资料及workspace/knowledge副本，学员新建rag_demo.py编写load_knowledge_documents() -> list[dict]，用目录glob枚举.md、UTF-8读取并记录path/content。仅写加载函数，后续再检索相关片段及带出处回答。教员只维护资料与文档，未代写/运行Python、发模型请求或Git上传。

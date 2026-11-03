@@ -89,7 +89,7 @@ tool_arg_models = {
 - [模型请求的重试边界](Agent进阶08_模型请求的重试边界.md)已整体静态通过：错误分类、摘要三次尝试、流式独立缓冲及发正文后停止重试、终止原因与取消传播已接齐，引号已修正。未将静态实现记为运行结果。
 - [MCP工具服务](Agent进阶09_MCP工具服务.md)的独立stdio服务与客户端发现/调用已有实际成功截图，返回Python3.12.10；MCP2.3.0客户端内容块读取已正确。工具尚未接入Agent。
 - [MCP工具接入Agent](Agent进阶10_MCP工具接入Agent.md)已于2026-11-03实际成功：mcp_demo保存模型get_python_version调用、同编号tool结果Python3.12.10及最终回答，与终端截图一致。MCP入口按本次串行集合调度，Client覆盖整个Agent调用期；验证入口为demo，CLI/HTTP本节未新增MCP连接配置。
-- 当前进入[代码审阅工作流](Agent进阶11_代码审阅工作流.md)：先由学员定义业务结果ReviewFinding/ReviewResult，随后在已有run_agent之外组织审阅、证据检查和报告。现有message/completed/reason运行结果契约继续沿用；新工作流尚未实现或运行。
+- [代码审阅工作流](Agent进阶11_代码审阅工作流.md)已实际跑通零问题路径：run_agent返回的JSON文字解析为ReviewResult，main组织源码核对、Markdown生成和保存；写入工具请求被只读策略拒绝已有会话证据。message/completed/reason契约继续沿用，非空问题及其他失败路径不据此宣称已实跑。下一项[RAG多文档问答](Agent进阶12_RAG与多文档问答.md)先将资料读成带路径的内部数据，再实现相关片段检索，尚未新增或运行RAG Python源码。
 
 ## 本节对照：三个函数
 
