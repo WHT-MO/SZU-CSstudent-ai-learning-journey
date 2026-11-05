@@ -31,7 +31,7 @@
 
 **MCP本节结果：** 终端截图与mcp_demo会话记录已交叉核实：模型调用get_python_version，匹配编号的tool结果返回Python3.12.10，随后生成最终回答。本节没有待改源码或额外验收；后续方向见学习地图。
 
-**当前动手：** 第12节[RAG与多文档问答](docs/Agent进阶12_RAG与多文档问答.md)。已准备[会话资料](docs/rag_demo/sessions.md)和[工具资料](docs/rag_demo/tools.md)，当前由学员新建rag_demo.py，先编写load_knowledge_documents读取多份资料为path/content字典列表；随后实现相关片段选择与带出处回答，尚未运行RAG应用。
+**当前学习：** [RAG与多文档问答](docs/Agent进阶12_RAG与多文档问答.md)、[任务用量与运行记录](docs/Agent进阶13_任务用量与运行记录.md)及[并行子任务与独立上下文](docs/Agent进阶14_并行子任务与独立上下文.md)已完成各自目标。当前进入[主Agent委派子任务](docs/Agent进阶15_主Agent委派子任务.md)：参数类与委派执行函数已静态通过，下一步为事件添加来源字段，随后接子任务显示、时间预算及工具注册；主模型实际委派尚未接通。
 
 **当前返回约定：** run_agent普通返回包含message、completed、reason的字典；completed为True表示取得完整最终回答，其他普通退出为False并提供原因。HTTP的agent_done.result透传该字典，CLI与HTTP客户端显示未完成原因。源码由学员亲写，本节结论依据静态审阅。
 

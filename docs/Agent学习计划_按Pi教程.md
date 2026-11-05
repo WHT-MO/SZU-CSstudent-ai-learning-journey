@@ -256,4 +256,4 @@
 
 ## 6. 下一步
 
-2026-11-04停点：前八节静态通过，第9/10节MCP已实际成功。第11节main格式异常分支已修正，11月3日23:57实际生成零问题报告，会话最终findings=[]与报告一致，模型写入请求被只读策略拒绝；本节按当前范围完成，不追加逐条证据等其他分支验收。当前进入第12节RAG与多文档问答，已准备两份固定资料及workspace/knowledge副本，学员新建rag_demo.py编写load_knowledge_documents() -> list[dict]，用目录glob枚举.md、UTF-8读取并记录path/content。仅写加载函数，后续再检索相关片段及带出处回答。教员只维护资料与文档，未代写/运行Python、发模型请求或Git上传。
+2026-11-05停点：前八节静态通过，第9/10节MCP、第11/12节、第13节正常任务及第14节固定编排均有各自完成证据。当前进入[主Agent委派子任务](Agent进阶15_主Agent委派子任务.md)：DelegateReviewArgs与delegation_tools.py已静态通过。下一步在agent_events创建ContextVar event_source，默认main；emit在循环前复制事件并添加source=event_source.get()再分发。随后接委派内来源切换/恢复、CLI与HTTP显示筛选、委派工具时间预算及注册，最后实际调用。当前仅接来源标记，不新增局部测试或自动Git上传。

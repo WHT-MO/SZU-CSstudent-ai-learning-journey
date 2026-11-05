@@ -23,6 +23,7 @@ code/agent_v1/workspace/skills/*
 !code/agent_v1/workspace/skills/review_python/
 code/agent_v1/workspace/skills/review_python/*
 !code/agent_v1/workspace/skills/review_python/SKILL.md
+code/agent_v1/runs.jsonl
 
 # 编辑器/系统
 .vscode/

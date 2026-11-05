@@ -1,9 +1,11 @@
 import asyncio
+import time
 from agent_runner import run_agent
 from session_store import clear_session
 from agent_events import listeners
 from session_store import get_session_path
 from tool_policies import read_only_guard
+from run_records import append_run_record
 
 async def show_tool_event(event):
     if event["type"] == "tool_start":
@@ -34,9 +36,35 @@ async def show_model_event(event):
             print("合计：",event["usage"]["total_tokens"])
 
 async def run_cli_task(prompt, session_id, read_only, steering_queue): #启动助手
+    started_at = time.perf_counter()
     before_tool = None
     if read_only:
         before_tool = read_only_guard
+
+    usage_totals = {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "reports": 0,
+    }
+
+    async def collect_usage(event): #tokens用量计总
+        if event["type"] != "model_response_end":
+            return
+        
+        usage = event["usage"]
+        if usage is None:
+            return
+
+        usage_totals["prompt_tokens"] += usage["prompt_tokens"]
+        usage_totals["completion_tokens"] += usage["completion_tokens"]
+        usage_totals["total_tokens"] += usage["total_tokens"]
+        usage_totals["reports"] += 1
+
+    listeners.append(collect_usage)
+
+    status = "running" #记录运行状态
+    reason = None
 
     try:
         agent_result = await run_agent(
@@ -47,13 +75,42 @@ async def run_cli_task(prompt, session_id, read_only, steering_queue): #启动�
         )
 
         if agent_result["completed"] == False:
+            status = "incomplete"
+            reason = agent_result["reason"]
             print(agent_result["reason"])
- 
+        else:
+            status = "completed"
+            reason = agent_result["reason"]
+
     except Exception as error:
+        status = "error"
+        reason = str(error)
         print(f"请求错误{error}")
 
     except asyncio.CancelledError:
+        status = "cancelled"
+        reason = "任务已取消"
         raise
+
+    finally:
+        elapsed_seconds = time.perf_counter() - started_at
+        print(f"任务耗时：{elapsed_seconds:.2f} 秒")
+
+        listeners.remove(collect_usage)
+        if usage_totals["reports"] == 0:
+            print("本次任务未收到用量统计")
+        else:
+            print("任务已报告用量统计")
+            print(f"输入：{usage_totals['prompt_tokens']} \n输出：{usage_totals['completion_tokens']} \n合计：{usage_totals['total_tokens']}")
+
+        record = { #保存运行记录
+            "session_id": session_id,
+            "status": status,
+            "reason": reason,
+            "elapsed_seconds": elapsed_seconds,
+            "usage_totals": usage_totals,
+        }
+        append_run_record(record)
 
 async def cancel_request(task) -> bool: #取消助手
     try:

@@ -307,6 +307,12 @@ async def summarize_messages(client, messages):
             )
             response.raise_for_status()
 
+            response_data = response.json()
+            usage = response_data.get("usage")
+
+            event = {"type": "model_response_end", "usage": usage}
+            await emit(event)
+
             message = extract_message(
                 response,
                 allowed_finish_reasons=("stop",),

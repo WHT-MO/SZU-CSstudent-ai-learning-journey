@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field
+from typing import Literal
 #--------------------参数模型-----------------------------------------------------
 class AgentTool(BaseModel): #工具参数
     name: str
@@ -29,3 +30,8 @@ class SearchFileArgs(BaseModel): #search参数
 
 class RunPythonArgs(BaseModel): #runpython参数
     path: str = Field(description="相对于workspace/的文件路径")
+
+class DelegateReviewArgs(BaseModel):
+    path: str = Field(description="	相对workspace/的目标 Python 文件路径")
+    focus: Literal["logic", "exceptions"] = Field(description="选择逻辑审阅或异常处理审阅")
+    review_context: str = Field(description="代码的实际用途、运行入口和支持范围")
