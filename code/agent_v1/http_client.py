@@ -31,7 +31,7 @@ async def request_agent(
 
                 event = json.loads(line[5:].strip())
 
-                if event["type"] == "text_delta":
+                if event["type"] == "text_delta" and event.get("source", "main") == "main":
                     print(f"{event["text"]}", end="", flush=True)
 
                 elif event["type"] == "agent_done":

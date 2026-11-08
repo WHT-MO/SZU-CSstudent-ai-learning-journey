@@ -1,0 +1,19 @@
+# 进阶第16节 工具可见性与只读权限
+
+第15节实跑时，子Agent看到全部工具说明，曾请求运行脚本和再次委派。两项调用都由只读执行钩子拒绝。现在让只读任务发给模型的工具目录也按其权限筛选。[第15节运行记录](Agent进阶15_主Agent委派子任务.md#8-已完成的cli委派)
+
+工具目录列出模型可以选择的工具。执行钩子处理模型实际提出的调用。项目用同一个只读工具名集合同时支持目录筛选和执行判断。
+
+## 当前动手
+
+1. 在tool_policies.py将现有的三个工具名提取为模块常量READ_ONLY_TOOL_NAMES。集合包含read_file、list_files和search_file，read_only_guard用这个常量判断。
+2. 在run_agent的参数末尾加visible_tool_names=None。在available_tools合并本地和MCP工具后、调用build_tools_payload之前，如果visible_tool_names is not None，则只保留tool.name在集合里的AgentTool对象。None沿用全量目录，显式传空集合得到空目录。
+3. review_workflow.py导入READ_ONLY_TOOL_NAMES。collect_review_findings调用run_agent时，把visible_tool_names=READ_ONLY_TOOL_NAMES与已有的before_tool=read_only_guard一起传入。子任务的模型目录和执行权限都按该集合工作。
+
+2026-11-08 22:00首版回读确认常量、执行判断和审阅调用已接好。agent_runner第415行将kept_tools赋给available_tools的位置在if外，普通模式会跳过循环后把目录覆盖成空列表。把赋值移到if里面、for循环之后，与for同级。build_tools_payload在if结束后执行。
+
+## 接CLI和HTTP只读入口
+
+修正筛选缩进后，在cli.run_cli_task和http_api.run_agent_to_queue导入同一份READ_ONLY_TOOL_NAMES。visible_tool_names初始化为None，在已有if read_only里赋为READ_ONLY_TOOL_NAMES。调用run_agent时通过关键字visible_tool_names传入该值。只读分支同时选择执行钩子和目录名单，普通模式使用完整目录。
+
+2026-11-08 22:11回读确认目录替换已在筛选条件内，普通模式保留完整目录。CLI、HTTP和审阅工作流均用共享集合选择可见目录，并使用只读钩子检查执行。第16节静态通过。下一步进入[后续任务队列](Agent进阶17_后续任务队列.md)。

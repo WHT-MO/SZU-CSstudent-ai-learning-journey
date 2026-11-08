@@ -1,12 +1,16 @@
 import asyncio
-#监听器
+from contextvars import ContextVar
 
+#监听器
+event_source = ContextVar("event_source", default="main") #标记并发任务
 listeners = []
 
 async def emit(event):
+    sub_event = event.copy()
+    sub_event["source"] = event_source.get()
     for listener in listeners:
         try:
-            await listener(event)
+            await listener(sub_event)
         except asyncio.CancelledError:
             raise
         except Exception as error:

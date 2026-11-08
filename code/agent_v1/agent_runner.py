@@ -2,11 +2,16 @@ import asyncio
 import json
 import httpx
 import inspect
-
 from pathlib import Path
 from pydantic import ValidationError
 
-from tool_registry import tool_arg_models, tool_functions, tool_specs, serial_tool_functions
+from tool_registry import (
+    tool_arg_models,
+    tool_functions,
+    tool_specs,
+    serial_tool_functions,
+    tool_timeouts,
+)
 from tools import workspace_root
 from agent_events import emit
 from session_store import save_session, load_session
@@ -246,7 +251,7 @@ async def execute_validated_tool(
     })
     
     try: #文件校验
-        if inspect.iscoroutinefunction(tool_function) == True: #异步函数支持(MCP)
+        if inspect.iscoroutinefunction(tool_function) == True: #异步工具函数支持
             tool_coroutine = tool_function(validated_args)
         else:    
             tool_coroutine = asyncio.to_thread(
@@ -254,7 +259,9 @@ async def execute_validated_tool(
                 validated_args,
                 )
 
-        tool_content = await asyncio.wait_for(tool_coroutine, timeout=10) #协程汇合
+        tool_content = await asyncio.wait_for( #协程汇合
+            tool_coroutine, timeout=tool_timeouts.get(tool_function, 10)
+        ) 
         status = "success"
 
     except asyncio.CancelledError:
@@ -368,6 +375,7 @@ async def run_agent(
         steering_queue = None,
         mcp_functions = None,
         mcp_tools = None,
+        visible_tool_names = None,
         ) -> dict:
     messages, summary_cache = load_session(session_id=session_id)
 
@@ -399,6 +407,13 @@ async def run_agent(
     save_session(messages, summary_cache, session_id=session_id)
 
     available_tools = tool_specs + mcp_tools #工具集合
+    kept_tools = [] #模型可见工具筛选
+    if visible_tool_names is not None:
+        for tool in available_tools:
+            if tool.name in visible_tool_names:
+                kept_tools.append(tool)
+        available_tools = kept_tools
+
     tools = build_tools_payload(available_tools)
     serial_functions = serial_tool_functions + list(mcp_functions.values()) #工具判断集合
     turn_count = 0

@@ -6,7 +6,7 @@ import json
 
 from agent_runner import run_agent
 from agent_events import listeners
-from tool_policies import read_only_guard
+from tool_policies import read_only_guard, READ_ONLY_TOOL_NAMES
 
 class ChatRequest(BaseModel):
     prompt: str
@@ -67,8 +67,11 @@ async def run_agent_to_queue( #事件放入队列
         read_only: bool = False,
     ): 
     before_tool = None
+    visible_tool_names = None
+
     if read_only:
         before_tool = read_only_guard
+        visible_tool_names = READ_ONLY_TOOL_NAMES
 
     listener = queue.put
     async with agent_lock:
@@ -82,6 +85,7 @@ async def run_agent_to_queue( #事件放入队列
                 session_id=session_id,
                 before_tool=before_tool,
                 steering_queue=steering_queue,
+                visible_tool_names=visible_tool_names,
             )
             await queue.put({
                 "type": "agent_done",

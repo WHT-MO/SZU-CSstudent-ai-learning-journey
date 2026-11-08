@@ -6,6 +6,7 @@ from tool_schemas import (
     EditFileArgs,
     SearchFileArgs,
     RunPythonArgs,
+    DelegateReviewArgs,
 )
 from tools import (
     read_file,
@@ -15,6 +16,7 @@ from tools import (
     search_file,
     run_python,
 )
+from delegation_tools import delegate_review
 
 #注册表
 tool_registry = {
@@ -24,42 +26,50 @@ tool_registry = {
         "description": "读取工作区文件，支持指定行范围",
         "requires_serial": False,
     },
-        "write_file": {
+    "write_file": {
         "args_model": WriteFileArgs,
         "function": write_file,
         "description": "写入保存的文本内容",
         "requires_serial": True,
     },
-        "list_files": {
+    "list_files": {
         "args_model": ListFilesArgs,
         "function": list_files,
         "description": "列出目录下文件名",
         "requires_serial": False,
     },
-        "edit_file": {
+    "edit_file": {
         "args_model": EditFileArgs,
         "function": edit_file,
         "description": "替换一段文本",
         "requires_serial": True,
     },
-        "search_file": {
+    "search_file": {
         "args_model": SearchFileArgs,
         "function": search_file,
         "description": "搜索文字，区分大小写，并限制匹配行数",
         "requires_serial": False,
     },
-        "run_python": {
+    "run_python": {
         "args_model": RunPythonArgs,
         "function": run_python,
         "description": "运行Python脚本",
         "requires_serial": True,
     },
+    "delegate_review": {
+        "args_model": DelegateReviewArgs,
+        "function": delegate_review,
+        "description": "委派独立的只读子任务审阅 Python 文件并返回报告",
+        "requires_serial": False,
+        "timeout_seconds": 45,
+    }
 }
 
 tool_arg_models = {} #参数
 tool_functions = {} #执行函数
-tool_specs = [] #说明书
+tool_specs = [] #规范说明书
 serial_tool_functions = [] #顺序执行策略
+tool_timeouts = {} #单独配置等待时长
 
 for name, info in tool_registry.items():
     tool_arg_models[name] = info["args_model"]
@@ -75,3 +85,6 @@ for name, info in tool_registry.items():
     
     if info["requires_serial"] is True:
         serial_tool_functions.append(info["function"])
+
+    if info.get("timeout_seconds"):
+        tool_timeouts[info["function"]] = info["timeout_seconds"]

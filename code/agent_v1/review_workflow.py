@@ -3,7 +3,7 @@ import json
 import asyncio
 
 from agent_runner import run_agent
-from tool_policies import read_only_guard
+from tool_policies import read_only_guard, READ_ONLY_TOOL_NAMES
 from tools import resolve_workspace_path
 
 #代码审阅工作流练习
@@ -36,6 +36,7 @@ evidence 原样引用源码，line 表示引用片段的起始行号，从1开�
         prompt,
         session_id=session_id,
         before_tool=read_only_guard,
+        visible_tool_names=READ_ONLY_TOOL_NAMES,
     )
 
     if agent_result["completed"] == False:
