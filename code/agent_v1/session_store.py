@@ -20,7 +20,7 @@ def get_session_path(session_id: str = "default") -> Path:
 def save_session(messages, summary_cache, session_id="default"):
     history_path = get_session_path(session_id)
 
-    text = json.dumps(
+    text = json.dumps( #字典转换
         {
             "messages": messages,
             "summary_cache": summary_cache,

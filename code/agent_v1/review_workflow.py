@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, ValidationError
 import json
 import asyncio
+from hashlib import sha256
 
 from agent_runner import run_agent
 from tool_policies import read_only_guard, READ_ONLY_TOOL_NAMES
@@ -89,6 +90,19 @@ def render_review_report(path: str, scope: str, result: ReviewResult) -> str: #�
 """
     return report
 
+def load_review_checkpoint(checkpoint_file, path, scope, source_hash): #读档
+    try:
+        text = checkpoint_file.read_text(encoding="utf-8")
+        checkpoint = json.loads(text)
+        if isinstance(checkpoint, dict):
+            if checkpoint.get("path") == path and checkpoint.get("scope") == scope and checkpoint.get("source_hash") == source_hash:
+                result = ReviewResult.model_validate(checkpoint.get("result"))
+                return result
+        return None
+
+    except (FileNotFoundError, json.JSONDecodeError, ValidationError) as error:
+        return None
+
 async def main():
     try:
         path = "minimal_loop.py"
@@ -100,14 +114,33 @@ async def main():
         report_file = resolve_workspace_path(report_path)
 
         source = source_file.read_text(encoding="utf-8") #读取源码
-        result = await collect_review_findings(path, scope, session_id) #收集审阅结果
+        checkpoint_file = resolve_workspace_path("review_checkpoint.json") #检查点路径
+        source_hash = sha256(source.encode("utf-8")).hexdigest() #哈希校验
 
-        validate_review_evidence(source, result) #检查证据
+        result = load_review_checkpoint(checkpoint_file, path, scope, source_hash)
+        if result is None:
+            result = await collect_review_findings(path, scope, session_id) #收集审阅结果
+
+            validate_review_evidence(source, result) #检查证据
+
+            checkpoint = { #存档
+                "path": path,
+                "scope": scope,
+                "source_hash": source_hash,
+                "result": result.model_dump(mode="json"),
+            }
+            checkpoint_text = json.dumps(checkpoint, ensure_ascii=False, indent=2)
+
+            temp_path = checkpoint_file.with_suffix(".tmp") #原子写入
+            temp_path.write_text(checkpoint_text,encoding="utf-8") #写入文件
+            temp_path.replace(checkpoint_file)
 
         report = render_review_report(path, scope, result) #生成报告
 
         report_file.write_text(report, encoding="utf-8") #保存报告
         print(f"审阅报告保存在{report_file}")
+
+        checkpoint_file.unlink(missing_ok=True) #清除检查点
 
     except ValidationError as error:
         print(f"审阅结果格式错误：{error}")
