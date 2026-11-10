@@ -2,6 +2,8 @@
 
 从 Python 基础出发，亲手搭建一个能调用模型、执行文件工具、保存会话的 Agent。当前按 [Pi 教程](https://www.dgzhuya.com/modules/ch01-overview) 的思路学习，用 Python 实现并理解循环、工具、消息、事件和上下文管理。
 
+启动服务、打开客户端和运行脚本的命令见 [Agent 常用命令（PowerShell）](docs/Agent常用命令.md)。
+
 **当前主线：Agent 进阶 · RAG与多文档问答。** 代码审阅工作流已实际跑通，后续从相关资料检索与带出处回答继续。已覆盖与后续方向见[Agent后续学习地图](docs/Agent后续学习地图.md)。Python基础与算法题记录见[历史归档](docs/Python学习阶段归档.md)。
 
 ## 当前进度 · 2026-11-04
@@ -103,7 +105,7 @@ DEEPSEEK_API_KEY=替换为自己的密钥
 .\.venv\Scripts\python.exe code\agent_v1\http_client.py
 ```
 
-输入任务后，客户端在后台处理一个请求，同时接收输入。输入/session study选择下一次请求的会话，/session查看当前选择，/stop取消并等待当前客户端请求收尾，/exit先清理请求再退出；忙碌时提示先停止当前请求再启动新任务。text_delta发送文字片段，agent_done.result保存最终消息（未取得时为null），普通未处理异常通过agent_error.message发送。服务端按请求的session_id选择历史，省略时使用default；客户端发送所选会话名。服务端完整任务由进程内共享锁顺序处理，使用单worker运行。普通JSON入口、SSE及Python客户端文件任务均已有学员成功运行截图，多会话及主动停止流程依据静态审阅。
+输入任务后，客户端在后台处理一个请求，同时接收输入。输入/session study选择下一次请求的会话，/session查看当前选择，/stop取消并等待当前客户端请求收尾，/exit先清理请求再退出；忙碌时提示先停止当前请求再启动新任务。text_delta发送文字片段，agent_done.result保存最终消息（未取得时为null），普通未处理异常通过agent_error.message发送。服务端按请求的session_id选择历史，省略时使用default；客户端发送所选会话名。服务端使用单worker，同一会话按顺序执行，普通任务之间通过全局工作区锁排队。不同只读会话并行和事件分流已有双窗口运行记录。普通JSON入口、SSE及Python客户端文件任务均已有学员成功运行截图，同一会话排队和主动停止流程依据静态审阅。
 
 ### MCP工具接入演示
 

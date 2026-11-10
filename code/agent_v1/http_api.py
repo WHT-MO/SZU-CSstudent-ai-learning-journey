@@ -3,9 +3,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import asyncio
 import json
+from contextlib import nullcontext
 
 from agent_runner import run_agent
-from agent_events import listeners
+from agent_events import listeners, task_listener
 from tool_policies import read_only_guard, READ_ONLY_TOOL_NAMES
 
 class ChatRequest(BaseModel):
@@ -17,9 +18,11 @@ class SteerRequest(BaseModel):
     text: str
     session_id: str = "default"
 
+
 app = FastAPI() #创建Web应用实例
-agent_lock = asyncio.Lock() #全局锁
 steering_queues = {} #队列登记
+agent_lock = asyncio.Lock() #全局锁
+session_locks = {} #会话锁
 
 @app.post("/chat") #注册API接口
 async def chat(data: ChatRequest): #接收API请求
@@ -73,9 +76,16 @@ async def run_agent_to_queue( #事件放入队列
         before_tool = read_only_guard
         visible_tool_names = READ_ONLY_TOOL_NAMES
 
-    listener = queue.put
-    async with agent_lock:
-        listeners.append(listener)
+    lock_key = session_id.lower() 
+    session_lock = session_locks.get(lock_key)
+    if session_lock is None:
+        session_lock = asyncio.Lock()
+        session_locks[lock_key] = session_lock
+
+    workspace_guard = nullcontext() if read_only else agent_lock #全局锁判断
+
+    async with session_lock, workspace_guard:
+        listener_token = task_listener.set(queue.put)
         steering_queue = asyncio.Queue()
         steering_queues[session_id] = steering_queue
 
@@ -100,7 +110,7 @@ async def run_agent_to_queue( #事件放入队列
 
         finally: #移除队列登记，清理监听器、通知发送端结束
             steering_queues.pop(session_id, None)
-            listeners.remove(listener)
+            task_listener.reset(listener_token)
             await queue.put(None)
 
 @app.post("/steer") 

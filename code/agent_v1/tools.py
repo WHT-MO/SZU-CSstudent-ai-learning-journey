@@ -1,6 +1,7 @@
 from pathlib import Path
 import subprocess
 import sys
+import os
 
 from tool_schemas import (
     EditFileArgs,
@@ -104,13 +105,17 @@ def search_file(file_args: SearchFileArgs) -> str:
         return "没有匹配结果"
     return "".join(selected)
 
-#runpython工具
+#run_python工具
 def run_python(file_args: RunPythonArgs) -> str:
     script_path = resolve_workspace_path(file_args.path)
+    child_env = os.environ.copy() #脚本子进程环境
+    child_env.pop("DEEPSEEK_API_KEY", None)
+
     try:
         result = subprocess.run( #返回退出码returncode、标准输出stdout、错误输出stderr
             args=[sys.executable, "-X", "utf8", str(script_path)], #固定解释器和编码
             cwd=workspace_root, #相对路径起点
+            env=child_env, #移除密钥环境
             capture_output=True, #收集stdout、stderr
             text=True, #读取文字
             encoding="utf-8", #统一编码
